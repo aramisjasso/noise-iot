@@ -7,7 +7,8 @@ WIFI_PASSWORD = ""
 # Unique node identifier, e.g. "tepic-01" or "monterrey-01".
 NODE_ID = ""
 
-# HTTPS endpoint of the Supabase Edge Function and its key.
+# HTTPS endpoint of the Supabase Edge Function and its key (see server/README.md).
+# INGEST_URL looks like "https://<project-ref>.supabase.co/functions/v1/ingest".
 INGEST_URL = ""
 INGEST_KEY = ""
 
