@@ -57,6 +57,22 @@ noise-iot/
    `firmware/config.py` está en el `.gitignore` porque contiene la contraseña del Wi-Fi y la
    llave de ingesta.
 
+## Pruebas
+
+Firmware (en la PC, con el hardware simulado):
+
+```bash
+python -m unittest discover -s firmware/tests
+```
+
+Servidor (función de ingesta y esquema de la base; requiere [Deno](https://deno.com)):
+
+```bash
+deno test --allow-read --allow-env server/
+```
+
+Para desplegar la base y la función en Supabase, ve [`server/README.md`](server/README.md).
+
 ## Reglas del repositorio
 
 - **Nunca subas** `firmware/config.py` ni audio crudo (`.wav`, `.raw`, `.bin`, `data/raw/`).
