@@ -14,3 +14,11 @@ INGEST_KEY = ""
 
 # Sent in every batch; bumped and tagged before the measurement campaign.
 FIRMWARE_VERSION = "0.1.0"
+
+# Microphone calibration in dB, added to every level. Leave 0.0 until the node
+# is compared against a sound level meter (see lib/sampler.py).
+MIC_CAL_DB = 0.0
+
+# Hardware watchdog: resets the node if it hangs. Keep True for the campaign;
+# set False while working at the REPL, or the board resets every 5 minutes.
+WATCHDOG = True
