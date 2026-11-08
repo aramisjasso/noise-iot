@@ -49,7 +49,12 @@ pip install mpremote
    Para pruebas usa un `NODE_ID` como `prueba-01`, así sus datos se distinguen y se borran
    fácil. Mientras pruebas desde la consola, pon `WATCHDOG = False`.
 
-2. Con la placa conectada por USB, copia los archivos (desde la raíz del repo):
+   La red tiene que ser de **2.4 GHz**: la ESP32 no se conecta a redes de 5 GHz. Si tu módem
+   tiene las dos con el mismo nombre, usa la de 2.4 GHz o el internet compartido del celular.
+
+2. Cierra Thonny (o cualquier programa que tenga abierta la placa): si el puerto COM está
+   ocupado, `mpremote` no se puede conectar. Con la placa conectada por USB, copia los
+   archivos (desde la raíz del repo):
 
    ```bash
    mpremote cp -r firmware/lib :
@@ -59,20 +64,33 @@ pip install mpremote
    mpremote cp firmware/boot.py firmware/main.py firmware/config.py :
    ```
 
-3. Reinicia la placa y mira lo que imprime (para salir: `Ctrl-]`):
-
-   ```bash
-   mpremote reset
-   ```
+3. Abre la consola de la placa:
 
    ```bash
    mpremote repl
    ```
 
+   y presiona `Ctrl-D`. La placa se reinicia ahí mismo y ves todo lo que imprime desde el
+   arranque (si reinicias con `mpremote reset` y luego abres la consola, los primeros
+   mensajes se pierden). Para salir de la consola: `Ctrl-]`.
+
 Lo que debes ver: `BOOT`, la conexión al Wi-Fi, `ntp: clock set` y `WAIT ... s until ...`. El
 primer lote sale unos 10 minutos después de la siguiente :00 o :30 (hora UTC), con
 `SEND_BATCH seq ... confirmed`. Antes de enviar imprime la RAM libre, que es el dato que
 decide si el HTTPS cabe en memoria.
+
+### Si algo falla
+
+| Lo que ves | Qué revisar |
+|---|---|
+| `mpremote` no encuentra la placa o dice que el puerto está ocupado | Cierra Thonny u otra consola serial; prueba otro cable USB (algunos solo cargan). |
+| `wifi: timeout` una y otra vez | Nombre y contraseña en `config.py`, y que la red sea de 2.4 GHz. |
+| `ntp: failed` y `BOOT no network or no clock` en ciclo | Hay Wi-Fi pero la red bloquea la hora por internet (NTP, puerto UDP 123); pasa en algunas redes institucionales. Prueba con otra red o con el celular. |
+| `uplink: send failed` y luego `QUEUED` | Sin internet, o `INGEST_URL` mal escrita. El lote queda en la cola y se reenvía solo. |
+| `uplink: server answered 401` | `INGEST_KEY` no coincide con la del servidor. |
+| `uplink: server answered 422` | El lote no cumple el contrato; avisa a quien lleva el servidor. |
+| `uplink: server answered 5xx` | Problema del servidor; el lote queda en la cola y se reenvía después. |
+| `ImportError` al arrancar | Faltó copiar algún archivo de `lib/`, o falta `config.py` en la placa. |
 
 ## Probar el micrófono sin esperar una ventana
 
