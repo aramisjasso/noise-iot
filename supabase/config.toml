@@ -61,7 +61,7 @@ max_client_conn = 100
 enabled = true
 # Specifies an ordered list of schema files, directories, or glob patterns that describe your database.
 # Supports paths relative to supabase directory: "./schemas/*.sql", "./database".
-schema_paths = ["../db/schema.sql"]
+schema_paths = ["../server/db/schema.sql"]
 
 [db.seed]
 # If enabled, seeds the database after migrations during a db reset.
@@ -383,12 +383,14 @@ inspector_port = 8083
 deno_version = 2
 
 # The ingest function lives in server/ingest/ (not supabase/functions/) so the
-# repo keeps one folder per layer. It authenticates nodes with INGEST_KEY, not
+# repo keeps one folder per layer. This config sits at the repo root because
+# the CLI only uploads files inside its project directory, and the function
+# imports contracts/message.schema.json. It authenticates nodes with INGEST_KEY, not
 # with a Supabase JWT, so the gateway must not require one.
 [functions.ingest]
 enabled = true
 verify_jwt = false
-entrypoint = "../ingest/index.ts"
+entrypoint = "../server/ingest/index.ts"
 
 # [edge_runtime.secrets]
 # secret_key = "env(SECRET_VALUE)"

@@ -20,6 +20,7 @@ noise-iot/
 ├── server/               Lado del servidor
 │   ├── ingest/           Edge Function que recibe los lotes
 │   └── db/               Esquema de PostgreSQL
+├── supabase/             Configuración del CLI de Supabase (despliegue de la función)
 ├── analysis/             Análisis de datos en Python
 │   ├── features/         Extracción de características (FFT, niveles)
 │   ├── models/           Red neuronal y modelos entrenados

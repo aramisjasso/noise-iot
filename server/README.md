@@ -11,7 +11,7 @@ Nodo ──HTTPS + JSON──▶ Edge Function (ingest) ──rpc──▶ Postg
 | `db/schema.sql` | Tablas, RLS y la función `ingest_batch()`. Se puede correr las veces que sea. |
 | `ingest/handler.ts` | Lógica HTTP: llave, validación contra el contrato, códigos de respuesta. |
 | `ingest/index.ts` | Punto de entrada de la Edge Function; conecta el handler con Supabase. |
-| `supabase/config.toml` | Configuración del CLI de Supabase (apunta la función a `ingest/`). |
+| `../supabase/config.toml` | Configuración del CLI de Supabase (apunta la función a `server/ingest/`). Está en la raíz porque el CLI solo sube archivos dentro de su carpeta, y la función importa `contracts/message.schema.json`. |
 
 ## Qué responde la función
 
@@ -39,33 +39,47 @@ lugar de tratarlos como duplicados y tirarlos sin avisar, la función responde `
 
 ## Desplegar en Supabase (una sola vez)
 
-1. Crea un proyecto en [supabase.com](https://supabase.com) (plan gratuito).
-2. En el **SQL Editor** del proyecto pega y corre el contenido de `server/db/schema.sql`.
-   Si después cambia el esquema, se vuelve a correr completo.
-3. Inicia sesión en el CLI y liga el proyecto (el *project ref* viene en la URL del panel):
+Todos los comandos se corren desde la raíz del repo.
+
+1. Crea un proyecto en [supabase.com](https://supabase.com) (plan gratuito). En
+   **Security**, deja activa la Data API (la función la usa), quita "Automatically expose new
+   tables" y activa "Enable automatic RLS".
+2. Inicia sesión en el CLI y liga el proyecto (el *project ref* viene en la URL del panel):
 
    ```bash
    supabase login
    ```
 
    ```bash
-   supabase link --workdir server --project-ref <project-ref>
+   supabase link --project-ref <project-ref>
    ```
 
-4. Genera una llave para los nodos y guárdala como secreto de la función:
+   Si `link` falla al leer las llaves del proyecto (`LegacyLinkApiKeysNetworkError`), basta
+   con escribir el ref en `supabase/.temp/project-ref`; el resto de los comandos funciona.
+
+3. Corre el esquema. Si después cambia, se vuelve a correr completo:
 
    ```bash
-   python -c "import secrets; print(secrets.token_urlsafe(32))"
+   supabase db query --linked -f server/db/schema.sql
+   ```
+
+   También se puede pegar el archivo en el **SQL Editor** del panel.
+
+4. Genera la llave de los nodos en `supabase/.env.local` (está en el `.gitignore`) y súbela
+   como secreto de la función:
+
+   ```bash
+   python -c "import secrets; open('supabase/.env.local','w').write('INGEST_KEY=' + secrets.token_urlsafe(32) + chr(10))"
    ```
 
    ```bash
-   supabase secrets set --workdir server INGEST_KEY=<la-llave>
+   supabase secrets set --env-file supabase/.env.local
    ```
 
 5. Despliega la función:
 
    ```bash
-   supabase functions deploy ingest --workdir server
+   supabase functions deploy ingest
    ```
 
 6. En el `firmware/config.py` de cada nodo:
@@ -137,14 +151,14 @@ deno test --allow-read --allow-env server/
 Con Docker Desktop abierto:
 
 ```bash
-supabase start --workdir server
+supabase start
 ```
 
 Corre `db/schema.sql` en el SQL Editor de Supabase Studio (`http://localhost:54323`) y luego:
 
 ```bash
-supabase functions serve ingest --workdir server --env-file server/supabase/.env.local
+supabase functions serve ingest --env-file supabase/.env.local
 ```
 
-donde `server/supabase/.env.local` (ya está en el `.gitignore`) tiene `INGEST_KEY=<una-llave>`.
+donde `supabase/.env.local` (ya está en el `.gitignore`) tiene `INGEST_KEY=<una-llave>`.
 La función queda en `http://localhost:54321/functions/v1/ingest`.
