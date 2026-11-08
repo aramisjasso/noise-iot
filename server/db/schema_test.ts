@@ -9,20 +9,26 @@ import contract from "../../contracts/message.schema.json" with { type: "json" }
 const schema = await Deno.readTextFile(new URL("./schema.sql", import.meta.url));
 const example = contract.examples[0];
 
-// Mimic the roles and default grants of a Supabase project, so the test
-// proves that RLS (not missing grants) is what keeps anon out.
-async function newDb(): Promise<PGlite> {
+// Mimic the roles of a Supabase project. With exposeNewTables (the dashboard
+// option "Automatically expose new tables") every role gets all privileges on
+// new tables, so the tests prove that RLS, not missing grants, keeps anon out.
+// Without it, roles get nothing by default.
+async function newDb({ exposeNewTables = true } = {}): Promise<PGlite> {
   const db = new PGlite();
   await db.exec(`
     create role anon nologin;
     create role authenticated nologin;
     create role service_role nologin bypassrls;
     grant usage on schema public to anon, authenticated, service_role;
-    alter default privileges in schema public
-      grant all on tables to anon, authenticated, service_role;
-    alter default privileges in schema public
-      grant execute on functions to anon, authenticated, service_role;
   `);
+  if (exposeNewTables) {
+    await db.exec(`
+      alter default privileges in schema public
+        grant all on tables to anon, authenticated, service_role;
+      alter default privileges in schema public
+        grant execute on functions to anon, authenticated, service_role;
+    `);
+  }
   await db.exec(schema);
   return db;
 }
@@ -115,10 +121,22 @@ Deno.test("anon can neither read, write nor call ingest_batch", async () => {
   await db.close();
 });
 
-Deno.test("service_role can call ingest_batch", async () => {
-  const db = await newDb();
-  await db.exec("set role service_role");
-  assertEquals(await ingest(db, example), "stored");
+for (const exposeNewTables of [true, false]) {
+  Deno.test(`service_role can store and resend (exposeNewTables=${exposeNewTables})`, async () => {
+    const db = await newDb({ exposeNewTables });
+    await db.exec("set role service_role");
+    assertEquals(await ingest(db, example), "stored");
+    assertEquals(await ingest(db, example), "duplicate");
+    await db.exec("reset role");
+    await db.close();
+  });
+}
+
+Deno.test("anon is locked out when new tables are not exposed", async () => {
+  const db = await newDb({ exposeNewTables: false });
+  await db.exec("set role anon");
+  await assertRejects(() => db.query("select * from batches"), Error, "permission denied");
+  await assertRejects(() => ingest(db, example), Error, "permission denied");
   await db.exec("reset role");
   await db.close();
 });

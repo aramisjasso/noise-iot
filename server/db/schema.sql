@@ -104,6 +104,10 @@ end;
 $$;
 
 -- Only the ingest function (service_role) may call it.
+--
+-- ingest_batch() runs with the caller's privileges, so service_role also needs
+-- explicit table grants: a project created with "Automatically expose new
+-- tables" turned off does not give them by default.
 revoke execute on function ingest_batch(jsonb) from public;
 do $$
 begin
@@ -112,6 +116,7 @@ begin
     end if;
     if exists (select 1 from pg_roles where rolname = 'service_role') then
         grant execute on function ingest_batch(jsonb) to service_role;
+        grant select, insert on batches, noise_levels, climate to service_role;
     end if;
 end;
 $$;
