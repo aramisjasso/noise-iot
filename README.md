@@ -60,11 +60,13 @@ noise-iot/
 
 ## Pruebas
 
-Firmware (en la PC, con el hardware simulado):
+Firmware (en la PC, con el hardware simulado; requiere `pip install jsonschema`):
 
 ```bash
 python -m unittest discover -s firmware/tests
 ```
+
+Para cargar el firmware a una ESP32, ve [`firmware/README.md`](firmware/README.md).
 
 Servidor (función de ingesta y esquema de la base; requiere [Deno](https://deno.com)):
 
