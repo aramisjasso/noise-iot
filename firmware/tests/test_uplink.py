@@ -49,7 +49,11 @@ class FakeRequests(types.ModuleType):
 
 fake = FakeRequests()
 sys.modules["urequests"] = fake
-import uplink  # noqa: E402  (must come after the fake is installed)
+import uplink  # noqa: E402
+
+# Another test may have imported uplink first (with CPython's requests), so
+# point the module at the fake explicitly.
+uplink.requests = fake
 
 URL = "https://example.supabase.co/functions/v1/ingest"
 
