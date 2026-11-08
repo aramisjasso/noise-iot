@@ -49,7 +49,11 @@ def post_batch(batch, url, key, timeout_s=DEFAULT_TIMEOUT_S):
             },
             timeout=timeout_s,
         )
-        return 200 <= resp.status_code < 300
+        if 200 <= resp.status_code < 300:
+            return True
+        # 401 = wrong INGEST_KEY, 422 = batch breaks the contract, 5xx = server.
+        print("uplink: server answered", resp.status_code)
+        return False
     except Exception as exc:  # OSError, timeouts, TLS errors, MemoryError
         print("uplink: send failed:", repr(exc))
         return False
