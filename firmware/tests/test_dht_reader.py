@@ -47,5 +47,36 @@ class ClimateRecorderTest(unittest.TestCase):
         self.assertEqual([n for n in range(25) if dht_reader.should_read(n)], [0, 10, 20])
 
 
+class PeriodicReaderTest(unittest.TestCase):
+    def test_reads_on_a_fixed_grid(self):
+        r = dht_reader.PeriodicReader(FakeDHT(), every_ms=6000)
+        times = [0, 1200, 5900, 6100, 7300, 12050, 13000]
+        got = [r.poll(t) for t in times]
+        self.assertEqual([g["t_offset_ms"] for g in got if g], [0, 6100, 12050])
+        self.assertEqual(got[0]["temp_c"], 24.0)
+        self.assertIsNone(got[0]["error"])
+        self.assertEqual(r.ok, 3)
+
+    def test_one_retry_then_null_with_error(self):
+        r = dht_reader.PeriodicReader(FakeDHT(fail_at={0, 1, 2}), every_ms=6000)
+        self.assertIsNone(r.poll(0))  # first attempt failed, retry pending
+        failed = r.poll(1200)
+        self.assertEqual(failed["attempts"], 2)
+        self.assertIsNone(failed["temp_c"])
+        self.assertIn("ETIMEDOUT", failed["error"])
+        self.assertIsNone(r.poll(2400))  # not due until 6000
+        self.assertIsNone(r.poll(6000))  # call 2 fails
+        ok = r.poll(7200)  # call 3 works
+        self.assertEqual((ok["attempts"], ok["t_offset_ms"]), (2, 7200))
+        self.assertEqual((r.ok, r.failed), (1, 1))
+
+    def test_missed_slots_are_skipped(self):
+        r = dht_reader.PeriodicReader(FakeDHT(), every_ms=6000)
+        r.poll(0)
+        self.assertIsNotNone(r.poll(20000))  # three slots late: one reading
+        self.assertIsNone(r.poll(21000))
+        self.assertIsNotNone(r.poll(24000))
+
+
 if __name__ == "__main__":
     unittest.main()

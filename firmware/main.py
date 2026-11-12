@@ -1,82 +1,71 @@
-"""Node entry point: measurement state machine.
+"""Node entry point (firmware v2): 1-second audio clips over MQTT.
 
-States (diagrama de estados, Notion):
-    BOOT             Configure ADC1 and the DHT11, connect Wi-Fi and sync the
-                     clock via NTP, retrying until both work; then resend any
-                     batches left in the outbox.
-    WAIT             Sleep until the next window start (:00 or :30 UTC).
-    SAMPLING_WINDOW  Record a 10-minute window: 600 one-second chunks, one
-                     dB level per chunk and a DHT11 reading every 10 chunks.
-    SEND_BATCH       POST the batch over HTTPS; on 2xx resend what is queued
-                     and go back to WAIT.
-    QUEUED           Sending failed: store the batch in the outbox and go back
-                     to WAIT; it is retried after the next successful send.
+States:
+    BOOT     Configure ADC1 and the DHT11, connect Wi-Fi and sync the clock
+             via NTP, retrying until both work.
+    WAIT     Sleep until the next session start (:00 or :30 UTC). Wake up
+             PREPARE_S earlier to reconnect Wi-Fi, resync the clock and open
+             the MQTT connection.
+    SESSION  For SESSION_S seconds: capture a 1 s clip (nothing is sent while
+             capturing), publish it, read the DHT11 when due and publish the
+             reading; repeat. Publishes session/start before and session/end
+             after (contracts/mqtt.md).
 
-Windows last 10 minutes and start aligned to minute :00 and :30 of every
-hour, so all nodes measure the same time span.
+Why clips: the TCP prototype (firmware/experiments/tcp_v1) sent audio while
+sampling, and 8-18 % of every session ended up as padding. Here the gaps are
+between clips, with their time known (t_offset_ms), and every clip is clean.
 
-Design choices not in the diagram:
-    - seq is the number of 30-minute windows since 2026-01-01 UTC. It needs
-      no file in flash, grows by exactly 1 per cycle (gaps = lost windows)
-      and survives a flash erase, so it never collides with old batches.
-    - Wi-Fi is turned off during WAIT and SAMPLING_WINDOW: radio bursts add
-      noise to ADC1 and interrupt the 8 kHz loop.
+Design choices:
+    - session_id is the scheduled start in UTC (YYYYMMDDTHHMMSSZ); all nodes
+      share the same ids, so sessions line up across sites.
+    - If the broker is unreachable the session still runs (the clips are
+      lost, not the schedule); the publisher retries the connection every
+      few clips and session/end reports how many clips failed.
     - A hardware watchdog resets the node if anything hangs (WATCHDOG in
       config.py; turn it off while working at the REPL).
-    - Saving raw audio for training windows (SD card) is still undecided
-      and not implemented.
 """
 
 import gc
+import json
+import struct
 import time
+
+try:
+    from time import sleep_ms, ticks_add, ticks_diff, ticks_ms
+except ImportError:  # CPython, for the tests on the PC
+    def ticks_ms():
+        return time.monotonic_ns() // 1000000
+
+    def ticks_add(ticks, delta):
+        return ticks + delta
+
+    def ticks_diff(a, b):
+        return a - b
+
+    def sleep_ms(ms):
+        time.sleep(ms / 1000)
 
 import config
 import dht_reader
-import outbox
+import publisher
 import sampler
-import uplink
 
 STATE_BOOT = "BOOT"
 STATE_WAIT = "WAIT"
-STATE_SAMPLING_WINDOW = "SAMPLING_WINDOW"
-STATE_SEND_BATCH = "SEND_BATCH"
-STATE_QUEUED = "QUEUED"
+STATE_SESSION = "SESSION"
 
-WINDOW_LENGTH_S = 600
-WINDOW_CHUNKS = 600  # one chunk per second
-CYCLE_S = 1800  # a window starts every 30 minutes
-WINDOW_START_MINUTES = (0, 30)
-
-SEQ_EPOCH = (2026, 1, 1)  # seq 0 is the window at 2026-01-01T00:00:00Z
+CYCLE_S = 1800  # a session starts every 30 minutes
+PREPARE_S = 45  # wake up this early to reconnect before the session
+CLIP_SAMPLES = sampler.CHUNK_SAMPLES  # 1 s at 8 kHz
+CLIP_HEADER = "<16sHIIHH"  # session_id, clip_idx, t_offset_ms, capture_us, n, late
+CLIP_HEADER_SIZE = struct.calcsize(CLIP_HEADER)  # 30 bytes
+DHT_EVERY_MS = 6000
 WIFI_TIMEOUT_S = 20
 BOOT_RETRY_S = 30
-MAX_FLUSH_PER_CYCLE = 20  # each resend takes a few seconds
 WATCHDOG_TIMEOUT_MS = 5 * 60 * 1000
-WIFI_OFF_WHILE_SAMPLING = True
 
 
 # ---------------------------------------------------------------- time ---
-
-def _days_from_civil(y, m, d):
-    """Days since 1970-01-01 of a Gregorian date (proleptic, UTC)."""
-    if m <= 2:
-        y -= 1
-    era = (y if y >= 0 else y - 399) // 400
-    yoe = y - era * 400
-    doy = (153 * (m + (-3 if m > 2 else 9)) + 2) // 5 + d - 1
-    doe = yoe * 365 + yoe // 4 - yoe // 100 + doy
-    return era * 146097 + doe - 719468
-
-
-def _unix_seconds(t):
-    """Unix time of t, whatever epoch time.time() uses on this port.
-
-    MicroPython ports differ (1970 or 2000); going through gmtime() fields
-    makes the result the same everywhere.
-    """
-    y, mo, d, h, mi, s = time.gmtime(t)[:6]
-    return _days_from_civil(y, mo, d) * 86400 + h * 3600 + mi * 60 + s
-
 
 def iso_utc(t):
     """Format t (time.time() value) as RFC 3339 UTC, e.g. 2026-11-05T18:00:00Z."""
@@ -84,27 +73,25 @@ def iso_utc(t):
     return "%04d-%02d-%02dT%02d:%02d:%02dZ" % (y, mo, d, h, mi, s)
 
 
+def session_id(t):
+    """Session id of a start time: YYYYMMDDTHHMMSSZ (16 characters, UTC)."""
+    y, mo, d, h, mi, s = time.gmtime(t)[:6]
+    return "%04d%02d%02dT%02d%02d%02dZ" % (y, mo, d, h, mi, s)
+
+
 def seconds_until_next_window(now_s):
-    """Compute how long to wait until the next :00 or :30 boundary.
+    """Seconds until the next :00 or :30 boundary; 0 exactly on a boundary.
 
-    Args:
-        now_s: current UTC time in seconds since the epoch.
-
-    Returns:
-        Seconds (int) until the next window start; 0 exactly on a boundary.
+    The 1970 and 2000 epochs differ by a whole number of 30-minute cycles,
+    so the result is the same on every MicroPython port.
     """
     remainder = int(now_s) % CYCLE_S
     return 0 if remainder == 0 else CYCLE_S - remainder
 
 
-def window_seq(window_start_s):
-    """Sequence number of the window that starts at window_start_s.
-
-    Returns:
-        Non-negative int: windows since SEQ_EPOCH, +1 every 30 minutes.
-    """
-    since = _unix_seconds(window_start_s) - _days_from_civil(*SEQ_EPOCH) * 86400
-    return since // CYCLE_S
+def topic(kind):
+    """MQTT topic for this node, e.g. noise/tepic/tepic-01/clip."""
+    return "noise/%s/%s/%s" % (config.SITE, config.NODE_ID, kind)
 
 
 def log(*args):
@@ -113,25 +100,20 @@ def log(*args):
 
 def sleep_s(seconds, feed=None):
     """Sleep in short slices so the watchdog keeps being fed."""
-    deadline = time.ticks_add(time.ticks_ms(), int(seconds * 1000))
+    deadline = ticks_add(ticks_ms(), int(seconds * 1000))
     while True:
-        left = time.ticks_diff(deadline, time.ticks_ms())
+        left = ticks_diff(deadline, ticks_ms())
         if left <= 0:
             return
         if feed:
             feed()
-        time.sleep_ms(min(left, 10000))
+        sleep_ms(min(left, 10000))
 
 
 # ------------------------------------------------------------- network ---
 
 def connect_wifi(ssid, password, timeout_s=WIFI_TIMEOUT_S):
     """Connect to Wi-Fi in station mode.
-
-    Args:
-        ssid: network name.
-        password: network password.
-        timeout_s: give up after this many seconds.
 
     Returns:
         True if connected, False on timeout.
@@ -147,30 +129,19 @@ def connect_wifi(ssid, password, timeout_s=WIFI_TIMEOUT_S):
     except OSError as exc:
         log("wifi: connect failed:", repr(exc))
         return False
-    deadline = time.ticks_add(time.ticks_ms(), timeout_s * 1000)
-    while time.ticks_diff(deadline, time.ticks_ms()) > 0:
+    deadline = ticks_add(ticks_ms(), timeout_s * 1000)
+    while ticks_diff(deadline, ticks_ms()) > 0:
         if wlan.isconnected():
             log("wifi: connected", wlan.ifconfig()[0])
             return True
-        time.sleep_ms(200)
+        sleep_ms(200)
     log("wifi: timeout")
     wlan.active(False)
     return False
 
 
-def wifi_off():
-    """Turn the radio off (quieter ADC, steadier sampling loop)."""
-    import network
-
-    network.WLAN(network.STA_IF).active(False)
-
-
 def sync_time():
-    """Set the RTC from NTP (UTC).
-
-    Returns:
-        True if the clock was synchronized, False otherwise.
-    """
+    """Set the RTC from NTP (UTC). Returns True on success."""
     import ntptime
 
     try:
@@ -182,86 +153,94 @@ def sync_time():
     return True
 
 
-# ------------------------------------------------------------ sampling ---
+# ------------------------------------------------------------- session ---
 
-def run_window(window_start_s, seq, adc, sensor, cal_db=0.0, feed=None):
-    """Record one full sampling window and build the batch.
-
-    Args:
-        window_start_s: UTC start of the window (time.time() value).
-        seq: batch sequence number, see window_seq().
-        adc: ADC returned by sampler.init_adc().
-        sensor: DHT11 returned by dht_reader.init_sensor().
-        cal_db: microphone calibration offset (MIC_CAL_DB).
-        feed: optional callable to feed the watchdog once per chunk.
-
-    Returns:
-        Batch dict matching contracts/message.schema.json.
-    """
-    buf = sampler.new_buffer()
-    climate = dht_reader.ClimateRecorder(sensor)
-    levels = []
-    capture_us = 0
-    slowest_us = 0
-    for n in range(WINDOW_CHUNKS):
-        try:
-            took = sampler.capture_chunk(adc, buf)
-            capture_us += took
-            slowest_us = max(slowest_us, took)
-            level = sampler.rms_db(buf, cal_db)
-        except Exception as exc:  # a bad chunk must not lose the window
-            log("chunk", n, "failed:", repr(exc))
-            level = None
-        levels.append(None if level is None else round(level, 1))
-        climate.tick(n)
-        if feed:
-            feed()
-
-    # The buffer is not needed while sending; free it before TLS needs RAM.
-    del buf
-    gc.collect()
-    log(
-        "window done: avg chunk %d ms, slowest %d ms, %d null levels"
-        % (capture_us // WINDOW_CHUNKS // 1000, slowest_us // 1000, levels.count(None))
-    )
+def start_message(sid, started_at, session_s):
+    """Body of session/start (contracts/mqtt/session_start.schema.json)."""
     return {
         "node_id": config.NODE_ID,
-        "seq": seq,
-        "window_start": iso_utc(window_start_s),
+        "session_id": sid,
+        "started_at": iso_utc(started_at),
         "firmware_version": config.FIRMWARE_VERSION,
-        "sample_rate_hz": sampler.SAMPLE_RATE_HZ,
-        "levels_db": levels,
-        "climate": climate.finish(),
+        "fs": sampler.SAMPLE_RATE_HZ,
+        "adc_bits": sampler.ADC_BITS,
+        "clip_samples": CLIP_SAMPLES,
+        "session_s": session_s,
+        "mic_model": getattr(config, "MIC_MODEL", None) or None,
+        "gain_setting": getattr(config, "GAIN_SETTING", None) or None,
+        "dht_model": "DHT11",
     }
 
 
-# ------------------------------------------------------------ delivery ---
-
-def deliver(batch, send):
-    """SEND_BATCH and QUEUED: upload one batch or keep it for later.
+def run_session(sid, pub, adc, sensor, session_s, clip_samples=CLIP_SAMPLES,
+                dht_every_ms=DHT_EVERY_MS, feed=None, clock=time.time):
+    """SESSION state: capture and publish clips for session_s seconds.
 
     Args:
-        batch: dict from run_window().
-        send: callable returning True when the server confirmed (2xx).
+        sid: session id from session_id().
+        pub: publisher.Publisher (or anything with publish(topic, payload)).
+        adc: ADC returned by sampler.init_adc().
+        sensor: DHT11 returned by dht_reader.init_sensor().
+        session_s: session length in seconds.
+        clip_samples: samples per clip (8000 = 1 s; smaller only in tests).
+        dht_every_ms: DHT11 period.
+        feed: optional callable to feed the watchdog once per clip.
+        clock: wall clock (time.time), only for started_at and ended_at.
 
     Returns:
-        True if the batch was confirmed, False if it went to the outbox.
+        The session/end message body (dict).
     """
-    if send(batch):
-        log(STATE_SEND_BATCH, "seq", batch["seq"], "confirmed")
-        resent = outbox.flush(send, MAX_FLUSH_PER_CYCLE)
-        if resent:
-            log("outbox: resent", resent, "batches")
-        return True
-    path = outbox.save(batch)
-    log(STATE_QUEUED, "seq", batch["seq"], "saved to", path)
-    return False
+    pub.publish(topic("session/start"), json.dumps(start_message(sid, clock(), session_s)))
+
+    gc.collect()
+    payload = sampler.new_clip_payload(CLIP_HEADER_SIZE, clip_samples)
+    climate = dht_reader.PeriodicReader(sensor, dht_every_ms)
+    sid_bytes = sid.encode()
+    clip_topic = topic("clip")
+    climate_topic = topic("climate")
+    captured = sent = late_total = 0
+
+    t0 = ticks_ms()
+    while True:
+        t_offset = ticks_diff(ticks_ms(), t0)
+        if t_offset >= session_s * 1000:
+            break
+        capture_us, late = sampler.capture_into(adc, payload, CLIP_HEADER_SIZE, clip_samples)
+        struct.pack_into(CLIP_HEADER, payload, 0, sid_bytes, captured, t_offset,
+                         capture_us, clip_samples, late)
+        late_total += late
+        if pub.publish(clip_topic, payload):
+            sent += 1
+        captured += 1
+
+        reading = climate.poll(ticks_diff(ticks_ms(), t0))
+        if reading is not None:
+            reading["node_id"] = config.NODE_ID
+            reading["session_id"] = sid
+            pub.publish(climate_topic, json.dumps(reading))
+        if feed:
+            feed()
+
+    end = {
+        "node_id": config.NODE_ID,
+        "session_id": sid,
+        "ended_at": iso_utc(clock()),
+        "duration_ms": ticks_diff(ticks_ms(), t0),
+        "clips_captured": captured,
+        "clips_sent": sent,
+        "clips_failed": captured - sent,
+        "late_samples": late_total,
+        "dht_ok": climate.ok,
+        "dht_failed": climate.failed,
+    }
+    pub.publish(topic("session/end"), json.dumps(end))
+    del payload
+    gc.collect()
+    return end
 
 
 def main():
-    """Run the state machine forever: BOOT -> WAIT -> SAMPLING_WINDOW ->
-    SEND_BATCH (on success) or QUEUED (on failure) -> WAIT ...
-    """
+    """BOOT once, then WAIT -> SESSION forever."""
     feed = None
     if getattr(config, "WATCHDOG", True):
         from machine import WDT
@@ -270,47 +249,36 @@ def main():
 
     log(STATE_BOOT, config.NODE_ID, "firmware", config.FIRMWARE_VERSION)
     adc = sampler.init_adc()
-    sensor = dht_reader.init_sensor()
-    cal_db = getattr(config, "MIC_CAL_DB", 0.0)
-
-    def send(batch):
-        if feed:
-            feed()
-        return uplink.post_batch(batch, config.INGEST_URL, config.INGEST_KEY)
+    sensor = dht_reader.init_sensor(getattr(config, "DHT_PIN", dht_reader.DHT_PIN))
+    session_s = getattr(config, "SESSION_S", 600)
+    pub = publisher.Publisher(config.NODE_ID, config.MQTT_HOST, getattr(config, "MQTT_PORT", 1883))
 
     def online():
         return connect_wifi(config.WIFI_SSID, config.WIFI_PASSWORD)
 
     while not (online() and sync_time()):
         log(STATE_BOOT, "no network or no clock, retrying in", BOOT_RETRY_S, "s")
-        wifi_off()
         sleep_s(BOOT_RETRY_S, feed)
 
-    resent = outbox.flush(send, MAX_FLUSH_PER_CYCLE)
-    if resent:
-        log("outbox: resent", resent, "batches")
-
     while True:
-        if WIFI_OFF_WHILE_SAMPLING:
-            wifi_off()
         now = time.time()
         wait = seconds_until_next_window(now)
         start = now + wait
-        seq = window_seq(start)
-        log(STATE_WAIT, wait, "s until", iso_utc(start), "seq", seq)
-        sleep_s(wait, feed)
-
-        log(STATE_SAMPLING_WINDOW, "seq", seq)
-        gc.collect()
-        batch = run_window(start, seq, adc, sensor, cal_db, feed)
+        log(STATE_WAIT, wait, "s until", iso_utc(start))
+        sleep_s(max(0, wait - PREPARE_S), feed)
 
         if online():
-            log("free RAM before sending:", gc.mem_free())
-            deliver(batch, send)
             sync_time()  # keep the RTC from drifting over the campaign
-        else:
-            path = outbox.save(batch)
-            log(STATE_QUEUED, "seq", seq, "no Wi-Fi, saved to", path)
+            if not pub.connected:
+                pub.connect()
+        sleep_s(max(0, start - time.time()), feed)
+
+        sid = session_id(start)
+        log(STATE_SESSION, sid, "free RAM", gc.mem_free())
+        end = run_session(sid, pub, adc, sensor, session_s, feed=feed)
+        log(STATE_SESSION, sid, "done: %d/%d clips sent, %d late samples, DHT %d ok %d failed"
+            % (end["clips_sent"], end["clips_captured"], end["late_samples"],
+               end["dht_ok"], end["dht_failed"]))
 
 
 if __name__ == "__main__":

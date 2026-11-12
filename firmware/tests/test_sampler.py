@@ -70,5 +70,34 @@ class CaptureChunkTest(unittest.TestCase):
         self.assertEqual(buf.itemsize, 2)
 
 
+class CaptureIntoTest(unittest.TestCase):
+    def test_writes_little_endian_samples_after_the_header(self):
+        payload = sampler.new_clip_payload(30, 400)
+        self.assertEqual(len(payload), 830)
+        adc = FakeADC(amplitude=2000)
+        took_us, late = sampler.capture_into(adc, payload, 30, 400)
+        self.assertEqual(payload[:30], bytearray(30))  # header untouched
+        values = array.array("H", bytes(payload[30:]))
+        self.assertEqual(adc.i, 400)
+        self.assertEqual(max(values), 2048 + 2000)
+        self.assertTrue(all(0 <= v <= 4095 for v in values))
+        self.assertGreaterEqual(took_us, 49_000)
+        self.assertGreaterEqual(late, 0)
+
+    def test_late_samples_are_counted_not_padded(self):
+        class SlowADC(FakeADC):
+            def read_u16(self):
+                t = sampler.ticks_us()
+                while sampler.ticks_diff(sampler.ticks_us(), t) < 300:
+                    pass  # each read takes longer than the 125 us period
+                return super().read_u16()
+
+        payload = sampler.new_clip_payload(0, 50)
+        adc = SlowADC(amplitude=100)
+        _, late = sampler.capture_into(adc, payload, 0, 50)
+        self.assertEqual(adc.i, 50)  # every sample is a real reading
+        self.assertGreater(late, 40)
+
+
 if __name__ == "__main__":
     unittest.main()

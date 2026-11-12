@@ -90,3 +90,63 @@ class ClimateRecorder:
             self._add(self._retry_from, None)
             self._retry_from = None
         return self.readings
+
+
+class PeriodicReader:
+    """DHT11 schedule for the clip sessions (firmware v2).
+
+    poll() is called after every clip (roughly every 1.2 s). A reading is
+    due every every_ms milliseconds; if it fails it is retried on the next
+    poll (the DHT11 needs about a second between reads) up to max_attempts
+    times. Each sample produces exactly one record, with null values and the
+    error text when every attempt failed.
+    """
+
+    def __init__(self, sensor, every_ms=6000, max_attempts=2):
+        self.sensor = sensor
+        self.every_ms = every_ms
+        self.max_attempts = max_attempts
+        self.next_due_ms = 0
+        self.attempts = 0
+        self.ok = 0
+        self.failed = 0
+
+    def poll(self, t_offset_ms):
+        """Read the sensor if due.
+
+        Args:
+            t_offset_ms: ms since the session started.
+
+        Returns:
+            None when there is nothing to report; otherwise a dict with
+            t_offset_ms, temp_c, rh, attempts and error (the climate message
+            body without node_id and session_id).
+        """
+        if self.attempts == 0 and t_offset_ms < self.next_due_ms:
+            return None
+        self.attempts += 1
+        error = None
+        try:
+            self.sensor.measure()
+            values = (float(self.sensor.temperature()), float(self.sensor.humidity()))
+        except OSError as exc:
+            values = None
+            error = "OSError: %s" % (exc,)
+        if values is None and self.attempts < self.max_attempts:
+            return None
+        record = {
+            "t_offset_ms": t_offset_ms,
+            "temp_c": values[0] if values else None,
+            "rh": values[1] if values else None,
+            "attempts": self.attempts,
+            "error": error,
+        }
+        if values:
+            self.ok += 1
+        else:
+            self.failed += 1
+        self.attempts = 0
+        # Next sample on the fixed grid, skipping slots already missed.
+        while self.next_due_ms <= t_offset_ms:
+            self.next_due_ms += self.every_ms
+        return record

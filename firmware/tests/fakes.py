@@ -20,6 +20,13 @@ for path in (FIRMWARE_DIR, os.path.join(FIRMWARE_DIR, "lib")):
 with open(os.path.join(REPO_DIR, "contracts", "message.schema.json"), encoding="utf-8") as f:
     CONTRACT = json.load(f)
 
+
+def mqtt_schema(name):
+    """Load contracts/mqtt/<name>.schema.json."""
+    path = os.path.join(REPO_DIR, "contracts", "mqtt", name + ".schema.json")
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
+
 if "config" not in sys.modules:
     config = types.ModuleType("config")
     config.WIFI_SSID = "test"
@@ -30,6 +37,13 @@ if "config" not in sys.modules:
     config.FIRMWARE_VERSION = "0.0.0-test"
     config.MIC_CAL_DB = 0.0
     config.WATCHDOG = False
+    config.SITE = "tepic"
+    config.MQTT_HOST = "localhost"
+    config.MQTT_PORT = 1883
+    config.SESSION_S = 600
+    config.MIC_MODEL = "KY-037"
+    config.GAIN_SETTING = ""
+    config.DHT_PIN = 4
     sys.modules["config"] = config
 
 
@@ -75,3 +89,45 @@ class FakeDHT:
 
     def humidity(self):
         return self.rh
+
+
+class FakePublisher:
+    """Records every publish; fail_topics makes publishes to those kinds fail."""
+
+    def __init__(self, fail=False):
+        self.fail = fail
+        self.messages = []
+        self.connected = True
+
+    def publish(self, topic, payload):
+        self.messages.append((topic, bytes(payload) if isinstance(payload, bytearray) else payload))
+        return not self.fail
+
+    def of_kind(self, kind):
+        return [p for t, p in self.messages if t.endswith("/" + kind)]
+
+
+class FakeMQTTClient:
+    """umqtt.simple stand-in: fail_connect / fail_publish simulate a dead broker."""
+
+    instances = []
+
+    def __init__(self, client_id, host, port, fail_connect=False, fail_publish=False):
+        self.args = (client_id, host, port)
+        self.fail_connect = fail_connect
+        self.fail_publish = fail_publish
+        self.published = []
+        self.disconnected = False
+        FakeMQTTClient.instances.append(self)
+
+    def connect(self):
+        if self.fail_connect:
+            raise OSError(113, "EHOSTUNREACH")
+
+    def publish(self, topic, msg, qos=0):
+        if self.fail_publish:
+            raise OSError(110, "ETIMEDOUT")
+        self.published.append((topic, msg, qos))
+
+    def disconnect(self):
+        self.disconnected = True

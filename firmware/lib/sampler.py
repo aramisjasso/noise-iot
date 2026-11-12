@@ -159,3 +159,53 @@ def rms_db(buf, cal_db=0.0):
     if variance <= 0:
         return None
     return 10 * math.log10(variance) + cal_db
+
+
+# ------------------------------------------------- clips (firmware v2) ---
+
+def new_clip_payload(header_size, n=CHUNK_SAMPLES):
+    """Allocate the MQTT payload of one clip: header plus n uint16 samples.
+
+    Allocated once and reused for every clip, so publishing never needs a
+    second 16 KB copy of the audio.
+    """
+    return bytearray(header_size + 2 * n)
+
+
+@micropython.native
+def capture_into(adc, payload, offset, n):
+    """Capture n samples at 8 kHz straight into payload as uint16 LE.
+
+    Nothing is sent over the network while capturing, so there is no
+    padding: if the loop falls behind (a Wi-Fi interrupt), the next samples
+    are taken as soon as possible and counted as late.
+
+    Args:
+        adc: ADC returned by init_adc().
+        payload: bytearray from new_clip_payload().
+        offset: byte position of the first sample (the header size).
+        n: number of samples.
+
+    Returns:
+        Tuple (capture_us, late): microseconds the capture took, and how
+        many samples were taken more than one period after their due time.
+    """
+    read = adc.read_u16
+    period = SAMPLE_PERIOD_US
+    late = 0
+    start = ticks_us()
+    due = start
+    j = offset
+    for _ in range(n):
+        lag = ticks_diff(ticks_us(), due)
+        if lag < 0:
+            while ticks_diff(due, ticks_us()) > 0:
+                pass
+        elif lag > period:
+            late += 1
+        v = read() >> 4
+        payload[j] = v & 0xFF
+        payload[j + 1] = v >> 8
+        j += 2
+        due = ticks_add(due, period)
+    return ticks_diff(ticks_us(), start), late
