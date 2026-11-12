@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/aramisjasso/noise-iot/contracts/mqtt/session_start.schema.json",
+  "title": "Session start",
+  "description": "Published on noise/<site>/<node_id>/session/start when a session begins.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "node_id",
+    "session_id",
+    "started_at",
+    "firmware_version",
+    "fs",
+    "adc_bits",
+    "clip_samples",
+    "session_s",
+    "mic_model",
+    "gain_setting",
+    "dht_model"
+  ],
+  "properties": {
+    "node_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9-]+$",
+      "description": "NODE_ID of the node; also the third level of the topic."
+    },
+    "session_id": {
+      "type": "string",
+      "pattern": "^[0-9]{8}T[0-9]{6}Z$",
+      "description": "Scheduled session start in UTC, YYYYMMDDTHHMMSSZ."
+    },
+    "started_at": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "Z$",
+      "description": "Real node clock (UTC) when capture started."
+    },
+    "firmware_version": {
+      "type": "string",
+      "description": "FIRMWARE_VERSION flashed on the node."
+    },
+    "fs": {
+      "const": 8000,
+      "description": "Requested sample rate in Hz."
+    },
+    "adc_bits": {
+      "const": 12,
+      "description": "ADC resolution; samples range 0-4095."
+    },
+    "clip_samples": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 65535,
+      "description": "Samples per clip."
+    },
+    "session_s": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Planned session length in seconds."
+    },
+    "mic_model": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Microphone module, e.g. KY-037."
+    },
+    "gain_setting": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Free text describing the gain (potentiometer position, resistor values)."
+    },
+    "dht_model": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Temperature/humidity sensor model."
+    }
+  }
+}

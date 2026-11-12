@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/aramisjasso/noise-iot/contracts/mqtt/climate.schema.json",
+  "title": "Climate reading",
+  "description": "Published on noise/<site>/<node_id>/climate after a DHT read (successful or not).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "node_id",
+    "session_id",
+    "t_offset_ms",
+    "temp_c",
+    "rh",
+    "attempts",
+    "error"
+  ],
+  "properties": {
+    "node_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9-]+$",
+      "description": "NODE_ID of the node; also the third level of the topic."
+    },
+    "session_id": {
+      "type": "string",
+      "pattern": "^[0-9]{8}T[0-9]{6}Z$",
+      "description": "Scheduled session start in UTC, YYYYMMDDTHHMMSSZ."
+    },
+    "t_offset_ms": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Time of the reading in ms since session start (node monotonic clock)."
+    },
+    "temp_c": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Temperature in °C; null if the read failed."
+    },
+    "rh": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": 0,
+      "maximum": 100,
+      "description": "Relative humidity in %; null if the read failed."
+    },
+    "attempts": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Reads tried for this sample."
+    },
+    "error": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Last error when the read failed; null on success."
+    }
+  }
+}

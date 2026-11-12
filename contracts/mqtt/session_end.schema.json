@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/aramisjasso/noise-iot/contracts/mqtt/session_end.schema.json",
+  "title": "Session end",
+  "description": "Published on noise/<site>/<node_id>/session/end when a session finishes.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "node_id",
+    "session_id",
+    "ended_at",
+    "duration_ms",
+    "clips_captured",
+    "clips_sent",
+    "clips_failed",
+    "late_samples",
+    "dht_ok",
+    "dht_failed"
+  ],
+  "properties": {
+    "node_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9-]+$",
+      "description": "NODE_ID of the node; also the third level of the topic."
+    },
+    "session_id": {
+      "type": "string",
+      "pattern": "^[0-9]{8}T[0-9]{6}Z$",
+      "description": "Scheduled session start in UTC, YYYYMMDDTHHMMSSZ."
+    },
+    "ended_at": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "Z$",
+      "description": "Real node clock (UTC) when the session ended."
+    },
+    "duration_ms": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Session length measured with the monotonic clock."
+    },
+    "clips_captured": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "clips_sent": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "clips_failed": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "late_samples": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Sum of late samples over all clips."
+    },
+    "dht_ok": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "dht_failed": {
+      "type": "integer",
+      "minimum": 0
+    }
+  }
+}
