@@ -1,0 +1,22 @@
+{
+  "formato_audio": "uint16 little-endian, valores 0-4095",
+  "dispositivo": "esp32-01",
+  "duracion_s": 30,
+  "muestras_bloque": 4000,
+  "bloques": 60,
+  "sesion": "20261109T055823Z",
+  "intervalo_dht_s": 6,
+  "fs": 8000,
+  "bits_adc": 12,
+  "inicio_pc": "2026-11-08 22:58:23",
+  "fin_pc": "2026-11-08 22:58:54",
+  "bloques_recibidos": 60,
+  "huecos_detectados": 0,
+  "completa": true,
+  "fin": {
+    "sesion": "20261109T055823Z",
+    "duracion_real_ms": 30010,
+    "lecturas_dht_ok": 5,
+    "muestras_rellenadas": 19340
+  }
+}
