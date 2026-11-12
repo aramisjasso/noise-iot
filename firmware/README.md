@@ -1,35 +1,37 @@
-# Firmware del nodo (ESP32 + MicroPython)
-
-Sigue el diagrama de estados del proyecto:
+# Firmware del nodo (ESP32 + MicroPython), v2: clips por MQTT
 
 ```
-BOOT ──▶ WAIT ──▶ SAMPLING_WINDOW ──▶ SEND_BATCH ──[confirmado]──▶ WAIT
- │        ▲        600 chunks de 1 s        │
- │        │        DHT11 cada 10 s          └──[sin red]──▶ QUEUED ──▶ WAIT
+BOOT ──▶ WAIT ──▶ SESSION (SESSION_S segundos) ──▶ WAIT ...
+ │                 ├─ captura un clip de 1 s (sin transmitir)
+ │                 ├─ lo publica por MQTT (QoS 1)
+ │                 └─ cada 6 s, una lectura del DHT11
  └─ Wi-Fi + NTP (reintenta hasta lograrlo)
 ```
 
+El contrato de los mensajes está en [`contracts/mqtt.md`](../contracts/mqtt.md).
+
 | Archivo | Qué hace |
 |---|---|
-| `main.py` | Máquina de estados: espera a las :00 y :30 (UTC), mide la ventana de 10 min y manda el lote. |
-| `lib/sampler.py` | Muestrea el micrófono por ADC1 (GPIO34) a 8 kHz y saca un nivel RMS en dB por segundo. |
-| `lib/dht_reader.py` | Lee el DHT11 (GPIO13) cada 10 s, con un reintento un segundo después si falla. |
-| `lib/outbox.py` | Cola en la flash para los lotes que no se pudieron enviar. |
-| `lib/uplink.py` | POST por HTTPS a la función de ingesta. |
-| `config.example.py` | Plantilla de `config.py` (Wi-Fi, `NODE_ID`, URL y llave). |
+| `main.py` | Máquina de estados: espera a las :00 y :30 (UTC) y graba una sesión de clips. |
+| `lib/sampler.py` | Muestrea el micrófono por ADC1 (GPIO34) a 8 kHz directo al mensaje del clip. |
+| `lib/dht_reader.py` | Lee el DHT11 cada 6 s, con un reintento si falla; si falla dos veces manda nulos y el error. |
+| `lib/publisher.py` | Conexión MQTT: publica con QoS 1, nunca truena y reintenta la conexión. |
+| `config.example.py` | Plantilla de `config.py` (Wi-Fi, `NODE_ID`, `SITE`, broker, duración de la sesión). |
+| `lib/uplink.py`, `lib/outbox.py` | Del camino anterior por HTTPS (v1); ya no los usa `main.py`. |
+| `experiments/tcp_v1/` | Prototipo de Jesús que manda audio crudo por TCP; referencia. |
 
-Decisiones que no vienen en el diagrama:
+Decisiones:
 
-- **`seq` es el número de ventana** desde el 1 de enero de 2026 (UTC): sube exactamente 1 cada
-  30 minutos, no se guarda en la flash y no se reinicia aunque se borre la placa. Un hueco en
-  `seq` es una ventana perdida.
-- **El Wi-Fi se apaga mientras se espera y se mide**: el radio mete ruido al ADC1 y frena el
-  muestreo. Se prende solo para mandar el lote.
+- **No se transmite mientras se captura.** En el prototipo TCP, entre 8 % y 18 % de cada
+  sesión era relleno por esa razón. Aquí cada clip está completo y los huecos quedan entre
+  clips, con su hora (`t_offset_ms`).
+- **`session_id` es la hora programada de inicio** (`YYYYMMDDTHHMMSSZ`): todos los nodos
+  comparten los mismos ids y las sesiones se pueden comparar entre sitios.
+- **Si el broker no responde, la sesión se graba igual**: esos clips se pierden pero el
+  horario no se mueve; `session/end` dice cuántos fallaron.
+- **Muestras tarde**: si una interrupción retrasa el muestreo, la muestra se toma en cuanto
+  se puede y se cuenta en `late`; nunca se rellena.
 - **Watchdog**: si algo se cuelga, la placa se reinicia sola (`WATCHDOG` en `config.py`).
-- **Niveles en dB** relativos a 1 cuenta del ADC, más `MIC_CAL_DB`. Para reportar dB SPL hay
-  que comparar cada nodo con un sonómetro y poner la diferencia en `MIC_CAL_DB`.
-- Guardar audio crudo en SD para las ventanas de entrenamiento sigue sin decidirse y no está
-  implementado.
 
 ## Cargarlo a la ESP32
 
@@ -39,20 +41,29 @@ Necesitas la ESP32 con MicroPython y [`mpremote`](https://docs.micropython.org/e
 pip install mpremote
 ```
 
-1. Crea tu configuración y llénala (Wi-Fi, `NODE_ID`, `INGEST_URL` e `INGEST_KEY`; la URL y la
-   llave te las pasa quien administra el servidor):
+1. Crea tu configuración y llénala (Wi-Fi, `NODE_ID`, `SITE` y `DHT_PIN`; el broker ya
+   viene apuntando a la laptop de CICESE):
 
    ```bash
    cp firmware/config.example.py firmware/config.py
    ```
 
-   Para pruebas usa un `NODE_ID` como `prueba-01`, así sus datos se distinguen y se borran
-   fácil. Mientras pruebas desde la consola, pon `WATCHDOG = False`.
+   Para pruebas usa un `NODE_ID` como `prueba-01` y `SESSION_S = 30`, así sus datos se
+   distinguen y la sesión dura medio minuto. Mientras pruebas desde la consola, pon
+   `WATCHDOG = False`.
 
    La red tiene que ser de **2.4 GHz**: la ESP32 no se conecta a redes de 5 GHz. Si tu módem
    tiene las dos con el mismo nombre, usa la de 2.4 GHz o el internet compartido del celular.
 
-2. Cierra Thonny (o cualquier programa que tenga abierta la placa): si el puerto COM está
+2. Revisa que la placa tenga la librería MQTT. En la consola de la placa,
+   `import umqtt.simple` no debe marcar error (el firmware oficial del ESP32 la trae). Si
+   marca `ImportError`, instálala con la placa conectada a internet:
+
+   ```bash
+   mpremote mip install umqtt.simple
+   ```
+
+3. Cierra Thonny (o cualquier programa que tenga abierta la placa): si el puerto COM está
    ocupado, `mpremote` no se puede conectar. Con la placa conectada por USB, copia los
    archivos (desde la raíz del repo):
 
@@ -64,7 +75,7 @@ pip install mpremote
    mpremote cp firmware/boot.py firmware/main.py firmware/config.py :
    ```
 
-3. Abre la consola de la placa:
+4. Abre la consola de la placa:
 
    ```bash
    mpremote repl
@@ -74,10 +85,11 @@ pip install mpremote
    arranque (si reinicias con `mpremote reset` y luego abres la consola, los primeros
    mensajes se pierden). Para salir de la consola: `Ctrl-]`.
 
-Lo que debes ver: `BOOT`, la conexión al Wi-Fi, `ntp: clock set` y `WAIT ... s until ...`. El
-primer lote sale unos 10 minutos después de la siguiente :00 o :30 (hora UTC), con
-`SEND_BATCH seq ... confirmed`. Antes de enviar imprime la RAM libre, que es el dato que
-decide si el HTTPS cabe en memoria.
+Lo que debes ver: `BOOT`, la conexión al Wi-Fi, `ntp: clock set` y `WAIT ... s until ...`. Unos
+45 s antes de la siguiente :00 o :30 (hora UTC) se reconecta, y a la hora en punto empieza
+`SESSION`; al terminar imprime cuántos clips mandó, cuántas muestras salieron tarde y cuántas
+lecturas del DHT11 funcionaron. En la laptop servidor, el suscriptor muestra cada clip que
+llega (ver `server/mqtt/README.md`).
 
 ### Si algo falla
 
@@ -86,13 +98,13 @@ decide si el HTTPS cabe en memoria.
 | `mpremote` no encuentra la placa o dice que el puerto está ocupado | Cierra Thonny u otra consola serial; prueba otro cable USB (algunos solo cargan). |
 | `wifi: timeout` una y otra vez | Nombre y contraseña en `config.py`, y que la red sea de 2.4 GHz. |
 | `ntp: failed` y `BOOT no network or no clock` en ciclo | Hay Wi-Fi pero la red bloquea la hora por internet (NTP, puerto UDP 123); pasa en algunas redes institucionales. Prueba con otra red o con el celular. |
-| `uplink: send failed` y luego `QUEUED` | Sin internet, o `INGEST_URL` mal escrita. El lote queda en la cola y se reenvía solo. |
-| `uplink: server answered 401` | `INGEST_KEY` no coincide con la del servidor. |
-| `uplink: server answered 422` | El lote no cumple el contrato; avisa a quien lleva el servidor. |
-| `uplink: server answered 5xx` | Problema del servidor; el lote queda en la cola y se reenvía después. |
+| `mqtt: connect failed` | El broker no responde: revisa `MQTT_HOST`, que la laptop servidor esté encendida y que la red deje salir al puerto 1883. |
+| `mqtt: publish failed` a media sesión | Se cayó la red o el broker; el nodo sigue grabando y reintenta la conexión cada 10 clips. |
+| `done: 0/N clips sent` | Ningún clip llegó al broker en toda la sesión; misma revisión que `connect failed`. |
+| Muchas `late samples` | El Wi-Fi interrumpe el muestreo; si son más de unas decenas por clip, avisa. |
 | `ImportError` al arrancar | Faltó copiar algún archivo de `lib/`, o falta `config.py` en la placa. |
 
-## Probar el micrófono sin esperar una ventana
+## Probar el micrófono sin esperar una sesión
 
 En la consola de la placa (`mpremote repl`, y `Ctrl-C` si `main.py` ya está corriendo):
 
@@ -120,7 +132,7 @@ Con el hardware simulado, desde la raíz del repo:
 python -m unittest discover -s firmware/tests
 ```
 
-Requieren `jsonschema` (valida cada lote contra `contracts/message.schema.json`):
+Requieren `jsonschema` (validan cada mensaje contra los esquemas de `contracts/mqtt/`):
 
 ```bash
 pip install jsonschema
