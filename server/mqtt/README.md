@@ -15,7 +15,8 @@ Nodo ESP32 ──MQTT QoS 1──▶ Mosquitto ──▶ subscriber.py ──▶
 | `protocol.py` | Valida tópicos y mensajes contra `contracts/mqtt.md`, decodifica el clip binario y guarda los archivos de audio. |
 | `store.py` | Escribe en PostgreSQL; los duplicados de QoS 1 se ignoran por llave. |
 | `subscriber.py` | Escucha `noise/+/+/#` y conecta todo lo anterior. Calcula los 30 rasgos de cada clip con `analysis/features/mfcc.py`. |
-| `.env.example` | Plantilla de la configuración (broker, base de datos, carpeta de audio). |
+| `estacion.py` | Recibe los tópicos `estacion/#` del firmware de Arduino de Jesús y los guarda como archivos, igual que su receptor TCP (no van a la base). |
+| `.env.example` | Plantilla de la configuración (broker, base de datos, carpetas de audio). |
 
 ## Qué se guarda de cada clip
 
@@ -26,6 +27,26 @@ Nodo ESP32 ──MQTT QoS 1──▶ Mosquitto ──▶ subscriber.py ──▶
   del ADC y cuántas muestras saturaron (0 o 4095).
 - En `clip_features`: RMS medio y máximo, pico, cruces por cero y media y
   desviación de 13 MFCC (`feature_version = mfcc13-v1`).
+
+## Sesiones de `estacion/` (firmware de Arduino de Jesús)
+
+Mientras el firmware de Arduino publique en su propio formato (`estacion/<dispositivo>/...`),
+el suscriptor guarda cada sesión en `ESTACION_DIR` para revisar que llegue completa:
+
+```
+ESTACION_DIR/<dispositivo>/<sesion>/
+    audio_crudo.u16   muestras del ADC tal como llegaron (uint16 LE, 8 kHz)
+    audio.wav         el mismo audio sin componente DC (se escribe al llegar "fin")
+    temp_hum.csv      lecturas del DHT11 ("antes" y "despues")
+    bloques.csv       un renglón por bloque: seq, muestras rellenadas, hora de llegada
+    sesion.json       "inicio" + resumen "fin" + bloques recibidos y faltantes
+```
+
+`sesion.json` dice cuántos bloques llegaron, cuáles faltan (`bloques_faltantes`) y si llegó el
+mensaje `inicio` (`inicio_recibido`; PubSubClient lo descarta si pasa de 256 bytes y no se
+llamó `mqtt.setBufferSize(1024)`). Un bloque que no llegó queda en ceros en su posición del
+`.u16`. Si nunca llega `fin`, la sesión se cierra como incompleta al empezar la siguiente del
+mismo dispositivo o tras 15 minutos sin mensajes.
 
 ## Instalación en la laptop (Windows, una sola vez)
 

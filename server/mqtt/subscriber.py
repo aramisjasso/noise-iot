@@ -6,6 +6,10 @@ Listens to noise/+/+/# on the broker and, for every message:
 - clip: saves the audio (.u16 raw and .wav), computes the 30 features of
   analysis/features/mfcc.py and writes the clip and its features.
 
+It also listens to estacion/# (Jesús's Arduino firmware, its own format) and
+stores those sessions as files in ESTACION_DIR, like his TCP receiver did; see
+estacion.py. Those do not go to PostgreSQL.
+
 A bad message is logged and skipped; it never stops the subscriber. The
 MQTT session is persistent (fixed client id, clean_session=False, QoS 1), so
 messages published while the subscriber is down are delivered when it
@@ -32,6 +36,7 @@ sys.path.insert(0, os.path.join(REPO_DIR, "analysis", "features"))
 
 import mfcc  # noqa: E402
 import protocol  # noqa: E402
+from estacion import StationReceiver  # noqa: E402
 
 log = logging.getLogger("subscriber")
 
@@ -107,6 +112,8 @@ def main():
     audio_dir = os.environ.get("AUDIO_DIR", os.path.join(REPO_DIR, "data", "raw", "audio"))
     store = PgStore(os.environ["PG_DSN"])
     ingestor = Ingestor(store, audio_dir)
+    estacion_dir = os.environ.get("ESTACION_DIR", os.path.join(os.path.dirname(audio_dir), "estacion"))
+    station = StationReceiver(estacion_dir)
 
     client = mqtt.Client(
         mqtt.CallbackAPIVersion.VERSION2,
@@ -117,12 +124,20 @@ def main():
 
     def on_connect(client, userdata, flags, reason_code, properties):
         log.info("connected to %s:%d (%s)", host, port, reason_code)
-        client.subscribe("noise/+/+/#", qos=1)
+        client.subscribe([("noise/+/+/#", 1), ("estacion/#", 1)])
 
     def on_disconnect(client, userdata, flags, reason_code, properties):
         log.warning("disconnected (%s), reconnecting", reason_code)
 
     def on_message(client, userdata, message):
+        if message.topic.startswith("estacion/"):
+            try:
+                log.info(station.handle(message.topic, message.payload))
+                for line in station.close_idle():
+                    log.warning("estacion sesion sin fin, cerrada: %s", line)
+            except Exception as exc:
+                log.warning("estacion rejected %s: %r", message.topic, exc)
+            return
         try:
             log.info(ingestor.handle(message.topic, message.payload))
         except protocol.ProtocolError as exc:
@@ -138,7 +153,7 @@ def main():
     client.on_disconnect = on_disconnect
     client.on_message = on_message
 
-    log.info("audio in %s", audio_dir)
+    log.info("audio in %s, estacion sessions in %s", audio_dir, estacion_dir)
     while True:
         try:
             client.connect(host, port, keepalive=60)
