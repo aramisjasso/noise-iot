@@ -33,8 +33,8 @@
 #include <time.h>
 
 // ============================ CONFIGURACIÓN ============================
-const char* WIFI_SSID   = "POCOX7";
-const char* WIFI_CLAVE  = "00000000";
+const char* WIFI_SSID   = "Redes";
+const char* WIFI_CLAVE  = "12345678";
 
 const char* MQTT_BROKER  = "158.97.122.248";   // IP de la PC u Orange Pi con Mosquitto (sin espacios)
 const uint16_t MQTT_PUERTO = 1883;
@@ -345,6 +345,8 @@ void tareaRedFn(void*) {
   mqtt.setServer(MQTT_BROKER, MQTT_PUERTO);
   mqtt.setKeepAlive(60);
   mqtt.setSocketTimeout(10);
+
+  mqtt.setBufferSize(1024);
 
   for (;;) {
     if (!reconectar()) {
