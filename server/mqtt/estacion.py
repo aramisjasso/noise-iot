@@ -12,7 +12,19 @@ arrives complete:
         bloques.csv       one row per audio block: seq, padded samples, arrival time
         sesion.json       "inicio" metadata + "fin" summary + what the PC received
 
-Nothing here goes to PostgreSQL. It is a check, not the campaign pipeline.
+With a store (PgStore), every message also goes to PostgreSQL, adapted to the
+tables of schema.sql:
+
+    inicio  -> sessions (firmware, fs, adc_bits, clip_samples = muestras_bloque,
+               session_s = duracion_s; the whole message in sessions.meta.inicio)
+    audio   -> clips, one row per 0.5 s block (clip_idx = seq, late_samples = padded
+               samples, raw_path = the session's audio_crudo.u16 at sample_offset),
+               and clip_features computed on that block
+    dht     -> climate (t_offset_ms 0 for "antes", end of the audio for "despues")
+    fin     -> sessions (duration, blocks sent and lost; whole message in meta.fin)
+
+The session row is created on the first message of any kind, with started_at
+taken from the session id, so a lost "inicio" does not lose the blocks.
 
 Messages (from the .ino):
     estacion/<d>/inicio   JSON  session metadata (may be missing: over 256 bytes,
@@ -31,8 +43,10 @@ import struct
 import sys
 import time
 import wave
+from datetime import datetime, timezone
 
 AUDIO_HEADER = struct.Struct("<16sIH")  # session, seq, padded samples
+ADC_MAX = 4095
 DEFAULT_FS = 8000
 DEFAULT_BLOCK = 4000
 
@@ -145,13 +159,24 @@ class StationSession:
             self.folder, self.received, expected, len(missing), complete)
 
 
+def session_start_time(session):
+    """UTC datetime of a YYYYMMDDTHHMMSSZ session id, or None if it does not parse."""
+    try:
+        return datetime.strptime(session, "%Y%m%dT%H%M%SZ").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+
+
 class StationReceiver:
-    """Routes estacion/<device>/<kind> messages to per-session files."""
+    """Routes estacion/<device>/<kind> messages to per-session files and, with a
+    store, to PostgreSQL."""
 
     IDLE_S = 15 * 60  # a session with no messages for this long is closed as incomplete
 
-    def __init__(self, base_dir):
+    def __init__(self, base_dir, store=None, site="tepic"):
         self.base_dir = base_dir
+        self.store = store
+        self.site = site
         self.sessions = {}  # (device, session) -> StationSession
         self.status = {}  # device -> last estado
 
@@ -164,7 +189,73 @@ class StationReceiver:
                     s.close(complete=False)
                     del self.sessions[(dev, sid)]
             self.sessions[key] = StationSession(self.base_dir, device, session)
+            if self.store is not None:
+                self.store.estacion_session(self.site, device, session, session_start_time(session))
         return self.sessions[key]
+
+    # ------------------------------------------------------------ database ---
+
+    def _db_block(self, device, s, seq, padded, raw):
+        import numpy as np
+        import mfcc
+
+        samples = np.frombuffer(raw, dtype="<u2")
+        if samples.size == 0 or samples.max() > ADC_MAX:
+            raise ValueError("block %d has samples out of range" % seq)
+        block = s.block or samples.size
+        row = {
+            "session_id": s.session,
+            "clip_idx": seq,
+            "t_offset_ms": seq * block * 1000 // s.fs,
+            "n_samples": int(samples.size),
+            # Hardware timer on the node: the server records the nominal timing.
+            "capture_us": samples.size * 1000000 // s.fs,
+            "fs_measured": float(s.fs),
+            "late_samples": padded,
+            "adc_mean": float(samples.mean()),
+            "adc_min": int(samples.min()),
+            "adc_max": int(samples.max()),
+            "clipped_samples": int(np.count_nonzero((samples == 0) | (samples == ADC_MAX))),
+            "raw_path": s.raw_path,
+            "wav_path": os.path.join(s.folder, "audio.wav"),
+            "sample_offset": seq * block,
+        }
+        self.store.clip(self.site, device, row, mfcc.clip_features(samples), mfcc.FEATURE_VERSION)
+
+    def _db_climate(self, device, s, msg):
+        if msg.get("momento") == "antes":
+            t_offset = 0
+        elif s.info.get("duracion_s"):
+            t_offset = int(s.info["duracion_s"]) * 1000
+        else:
+            last = max(s.seqs) + 1 if s.seqs else 0
+            t_offset = last * (s.block or DEFAULT_BLOCK) * 1000 // s.fs
+        ok = msg.get("temp") is not None and msg.get("hum") is not None
+        self.store.climate(self.site, {
+            "node_id": device,
+            "session_id": s.session,
+            "t_offset_ms": t_offset,
+            "temp_c": msg.get("temp"),
+            "rh": msg.get("hum"),
+            "attempts": int(msg.get("intentos") or 1),
+            "error": None if ok else "sin lectura valida del DHT11",
+        })
+
+    def _db_end(self, device, s, fin):
+        missing, expected = s.missing_blocks()
+        sent = int(fin.get("bloques_enviados", s.received))
+        lost = int(fin.get("bloques_perdidos_buffer", 0))
+        self.store.estacion_end(device, s.session, {
+            "duration_ms": int(fin.get("duracion_real_ms", 0)),
+            "clips_captured": expected - lost,
+            "clips_sent": sent,
+            "clips_failed": expected - sent,
+            "late_samples": int(fin.get("muestras_rellenadas", s.padded)),
+        }, {
+            "fin": fin,
+            "servidor": {"bloques_recibidos": s.received, "bloques_esperados": expected,
+                         "bloques_faltantes": missing},
+        })
 
     def close_idle(self):
         now = time.time()
@@ -189,7 +280,11 @@ class StationReceiver:
                 raise ValueError("audio block too short (%d bytes)" % len(payload))
             sid, seq, padded = AUDIO_HEADER.unpack_from(payload, 0)
             session = sid.decode("ascii", "replace").rstrip("\x00")
-            self._session(device, session).audio(seq, padded, payload[AUDIO_HEADER.size:])
+            s = self._session(device, session)
+            raw = payload[AUDIO_HEADER.size:]
+            s.audio(seq, padded, raw)
+            if self.store is not None:
+                self._db_block(device, s, seq, padded, raw)
             return "estacion %s %s audio #%d rellenos=%d" % (device, session, seq, padded)
         msg = json.loads(payload)
         session = msg.get("sesion")
@@ -198,12 +293,24 @@ class StationReceiver:
         s = self._session(device, session)
         if kind == "inicio":
             s.start(msg)
+            if self.store is not None:
+                self.store.estacion_start(device, session, {
+                    "firmware_version": msg.get("firmware"),
+                    "fs": s.fs,
+                    "adc_bits": msg.get("bits_adc"),
+                    "clip_samples": s.block,
+                    "session_s": msg.get("duracion_s"),
+                }, {"inicio": msg})
             return "estacion %s %s inicio" % (device, session)
         if kind == "dht":
             s.reading(msg)
+            if self.store is not None:
+                self._db_climate(device, s, msg)
             return "estacion %s %s dht %s T=%s H=%s" % (
                 device, session, msg.get("momento"), msg.get("temp"), msg.get("hum"))
         if kind == "fin":
+            if self.store is not None:
+                self._db_end(device, s, msg)
             line = s.close(fin=msg, complete=True)
             del self.sessions[(device, session)]
             return "estacion sesion cerrada " + line

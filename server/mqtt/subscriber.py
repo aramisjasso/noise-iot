@@ -6,9 +6,10 @@ Listens to noise/+/+/# on the broker and, for every message:
 - clip: saves the audio (.u16 raw and .wav), computes the 30 features of
   analysis/features/mfcc.py and writes the clip and its features.
 
-It also listens to estacion/# (Jesús's Arduino firmware, its own format) and
-stores those sessions as files in ESTACION_DIR, like his TCP receiver did; see
-estacion.py. Those do not go to PostgreSQL.
+It also listens to estacion/# (Jesús's Arduino firmware, its own format): each
+session is stored as files in ESTACION_DIR, like his TCP receiver did, and its
+blocks, DHT readings and summary go to the same PostgreSQL tables (see
+estacion.py). ESTACION_SITE says which site those nodes belong to.
 
 A bad message is logged and skipped; it never stops the subscriber. The
 MQTT session is persistent (fixed client id, clean_session=False, QoS 1), so
@@ -113,7 +114,7 @@ def main():
     store = PgStore(os.environ["PG_DSN"])
     ingestor = Ingestor(store, audio_dir)
     estacion_dir = os.environ.get("ESTACION_DIR", os.path.join(os.path.dirname(audio_dir), "estacion"))
-    station = StationReceiver(estacion_dir)
+    station = StationReceiver(estacion_dir, store, os.environ.get("ESTACION_SITE", "tepic"))
 
     client = mqtt.Client(
         mqtt.CallbackAPIVersion.VERSION2,

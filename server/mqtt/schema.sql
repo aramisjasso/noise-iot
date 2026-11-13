@@ -93,12 +93,20 @@ create table if not exists labels (
     created_at timestamptz not null default now()
 );
 
+-- Added for the estacion/ format (firmware/ESP32, Arduino): raw "inicio"/"fin"
+-- messages are kept whole in sessions.meta, and each 0.5 s block points into the
+-- session's single audio_crudo.u16 (raw_path) at sample_offset.
+alter table sessions add column if not exists meta jsonb;
+alter table clips add column if not exists sample_offset bigint;
+
 create index if not exists clips_session_idx on clips (node_id, session_id);
 create index if not exists climate_session_idx on climate (node_id, session_id);
 create index if not exists labels_clip_idx on labels (node_id, session_id, clip_idx);
 
--- Clips with their absolute time (session start + offset).
-create or replace view clips_timed as
+-- Clips with their absolute time (session start + offset). Dropped and created
+-- again because clips gained a column and the view expands c.*.
+drop view if exists clips_timed;
+create view clips_timed as
 select c.*,
        s.site,
        s.started_at + c.t_offset_ms * interval '1 millisecond' as captured_at

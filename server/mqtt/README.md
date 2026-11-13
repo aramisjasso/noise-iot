@@ -15,7 +15,7 @@ Nodo ESP32 ──MQTT QoS 1──▶ Mosquitto ──▶ subscriber.py ──▶
 | `protocol.py` | Valida tópicos y mensajes contra `contracts/mqtt.md`, decodifica el clip binario y guarda los archivos de audio. |
 | `store.py` | Escribe en PostgreSQL; los duplicados de QoS 1 se ignoran por llave. |
 | `subscriber.py` | Escucha `noise/+/+/#` y conecta todo lo anterior. Calcula los 30 rasgos de cada clip con `analysis/features/mfcc.py`. |
-| `estacion.py` | Recibe los tópicos `estacion/#` del firmware de Arduino de Jesús y los guarda como archivos, igual que su receptor TCP (no van a la base). |
+| `estacion.py` | Recibe los tópicos `estacion/#` del firmware de Arduino de Jesús: guarda cada sesión como archivos, igual que su receptor TCP, y la mete a las mismas tablas. |
 | `.env.example` | Plantilla de la configuración (broker, base de datos, carpetas de audio). |
 
 ## Qué se guarda de cada clip
@@ -30,8 +30,22 @@ Nodo ESP32 ──MQTT QoS 1──▶ Mosquitto ──▶ subscriber.py ──▶
 
 ## Sesiones de `estacion/` (firmware de Arduino de Jesús)
 
-Mientras el firmware de Arduino publique en su propio formato (`estacion/<dispositivo>/...`),
-el suscriptor guarda cada sesión en `ESTACION_DIR` para revisar que llegue completa:
+El firmware de Arduino (`firmware/ESP32/`) publica en su propio formato
+(`estacion/<dispositivo>/...`). El suscriptor se adapta a él: guarda cada sesión en
+`ESTACION_DIR` y además la mete a PostgreSQL.
+
+| Mensaje | Tabla | Cómo |
+|---|---|---|
+| `inicio` | `sessions` | `clip_samples` = `muestras_bloque`, `session_s` = `duracion_s`; el mensaje completo en `meta->'inicio'` |
+| `audio` | `clips` + `clip_features` | Una fila por bloque de 0.5 s: `clip_idx` = `seq`, `late_samples` = muestras rellenadas, `raw_path` = el `audio_crudo.u16` de la sesión y `sample_offset` = dónde empieza el bloque dentro de él. Los rasgos se calculan sobre ese bloque. |
+| `dht` | `climate` | `t_offset_ms` = 0 para "antes" y el final del audio para "después" |
+| `fin` | `sessions` | Duración, bloques enviados y fallidos; el mensaje completo en `meta->'fin'` y lo que recibió el servidor en `meta->'servidor'` |
+
+La fila de la sesión se crea con el primer mensaje que llegue, con `started_at` tomado del id de
+la sesión, así que si se pierde `inicio` los bloques se guardan igual. `ESTACION_SITE` en el
+`.env` dice a qué sitio pertenecen estos nodos (por defecto `tepic`).
+
+Archivos por sesión:
 
 ```
 ESTACION_DIR/<dispositivo>/<sesion>/

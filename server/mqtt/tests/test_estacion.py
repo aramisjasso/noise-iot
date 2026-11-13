@@ -88,5 +88,68 @@ class StationTest(unittest.TestCase):
             self.rx.handle("estacion/esp32-01/otro/nivel", b"x")
 
 
+class RecordingStore:
+    """Records the PgStore calls made by StationReceiver."""
+
+    def __init__(self):
+        self.calls = []
+
+    def __getattr__(self, name):
+        return lambda *args: self.calls.append((name, args))
+
+    def named(self, name):
+        return [args for n, args in self.calls if n == name]
+
+
+class StationDatabaseTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.store = RecordingStore()
+        self.rx = StationReceiver(self.tmp.name, self.store, "tepic")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def send(self, kind, payload):
+        return self.rx.handle("estacion/esp32-01/" + kind, payload)
+
+    def test_session_goes_to_the_tables(self):
+        self.send("inicio", inicio())
+        self.send("dht", dht("antes"))
+        for seq in range(3):
+            self.send("audio", audio(seq, 1000 + seq, padded=seq))
+        self.send("dht", json.dumps({"sesion": SID, "momento": "despues", "temp": None,
+                                     "hum": None, "intentos": 3}).encode())
+        self.send("fin", fin())
+
+        site, node, sid, started = self.store.named("estacion_session")[0]
+        self.assertEqual((site, node, sid), ("tepic", "esp32-01", SID))
+        self.assertEqual(started.isoformat(), "2026-11-13T18:30:00+00:00")
+        fields = self.store.named("estacion_start")[0][2]
+        self.assertEqual((fields["clip_samples"], fields["session_s"]), (4000, 1))
+
+        clips = self.store.named("clip")
+        self.assertEqual(len(clips), 3)
+        _, _, row, features, version = clips[2]
+        self.assertEqual((row["clip_idx"], row["t_offset_ms"], row["sample_offset"]), (2, 1000, 8000))
+        self.assertEqual((row["late_samples"], row["n_samples"]), (2, 4000))
+        self.assertEqual(len(features["mfcc_mean"]), 13)
+        self.assertEqual(version, "mfcc13-v1")
+
+        climate = [args[1] for args in self.store.named("climate")]
+        self.assertEqual([c["t_offset_ms"] for c in climate], [0, 1000])
+        self.assertIsNone(climate[1]["temp_c"])
+        self.assertEqual(climate[1]["error"], "sin lectura valida del DHT11")
+
+        _, _, end, meta = self.store.named("estacion_end")[0]
+        self.assertEqual((end["clips_sent"], end["clips_failed"]), (3, 0))
+        self.assertEqual(meta["servidor"]["bloques_faltantes"], [])
+
+    def test_blocks_without_inicio_still_stored(self):
+        self.send("audio", audio(0, 1000))
+        self.assertEqual(len(self.store.named("estacion_session")), 1)
+        self.assertEqual(len(self.store.named("clip")), 1)
+
+
 if __name__ == "__main__":
     unittest.main()
