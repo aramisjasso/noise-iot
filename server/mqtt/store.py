@@ -4,6 +4,8 @@ Every insert uses ON CONFLICT on the message key, so a QoS 1 duplicate is a
 no-op and the subscriber never fails because of it.
 """
 
+import json
+
 import psycopg
 
 
@@ -104,14 +106,14 @@ class PgStore:
                     """
                     insert into clips (node_id, session_id, clip_idx, t_offset_ms, n_samples,
                         capture_us, fs_measured, late_samples, adc_mean, adc_min, adc_max,
-                        clipped_samples, raw_path, wav_path)
+                        clipped_samples, raw_path, wav_path, sample_offset)
                     values (%(node_id)s, %(session_id)s, %(clip_idx)s, %(t_offset_ms)s,
                         %(n_samples)s, %(capture_us)s, %(fs_measured)s, %(late_samples)s,
                         %(adc_mean)s, %(adc_min)s, %(adc_max)s, %(clipped_samples)s,
-                        %(raw_path)s, %(wav_path)s)
+                        %(raw_path)s, %(wav_path)s, %(sample_offset)s)
                     on conflict (node_id, session_id, clip_idx) do nothing
                     """,
-                    dict(row, node_id=node_id),
+                    dict(row, node_id=node_id, sample_offset=row.get("sample_offset")),
                 )
                 cur.execute(
                     """
@@ -129,3 +131,49 @@ class PgStore:
                         feature_version=feature_version,
                     ),
                 )
+
+    # ------------------------------------------- estacion/ (Arduino firmware) ---
+
+    def estacion_session(self, site, node_id, session_id, started_at):
+        """Create the session row on its first message; started_at comes from the id."""
+        with self._cursor() as cur:
+            cur.execute(
+                "insert into sessions (node_id, session_id, site, started_at) "
+                "values (%s, %s, %s, %s) on conflict (node_id, session_id) do update "
+                "set started_at = coalesce(sessions.started_at, excluded.started_at)",
+                (node_id, session_id, site, started_at),
+            )
+
+    def estacion_start(self, node_id, session_id, fields, meta):
+        """Fill the session with the "inicio" message (fields: firmware_version, fs,
+        adc_bits, clip_samples, session_s) and keep the raw message in meta."""
+        with self._cursor() as cur:
+            cur.execute(
+                """
+                update sessions set firmware_version = %(firmware_version)s, fs = %(fs)s,
+                    adc_bits = %(adc_bits)s, clip_samples = %(clip_samples)s,
+                    session_s = %(session_s)s,
+                    meta = coalesce(meta, '{}'::jsonb) || %(meta)s::jsonb
+                where node_id = %(node_id)s and session_id = %(session_id)s
+                """,
+                dict(fields, node_id=node_id, session_id=session_id, meta=json.dumps(meta)),
+            )
+
+    def estacion_end(self, node_id, session_id, fields, meta):
+        """Close the session with the "fin" message. dht_ok and dht_failed are
+        counted from the climate rows that arrived."""
+        with self._cursor() as cur:
+            cur.execute(
+                """
+                update sessions set ended_at = now(), duration_ms = %(duration_ms)s,
+                    clips_captured = %(clips_captured)s, clips_sent = %(clips_sent)s,
+                    clips_failed = %(clips_failed)s, late_samples = %(late_samples)s,
+                    dht_ok = (select count(*) from climate c where c.node_id = %(node_id)s
+                              and c.session_id = %(session_id)s and c.temp_c is not null),
+                    dht_failed = (select count(*) from climate c where c.node_id = %(node_id)s
+                                  and c.session_id = %(session_id)s and c.temp_c is null),
+                    meta = coalesce(meta, '{}'::jsonb) || %(meta)s::jsonb
+                where node_id = %(node_id)s and session_id = %(session_id)s
+                """,
+                dict(fields, node_id=node_id, session_id=session_id, meta=json.dumps(meta)),
+            )
