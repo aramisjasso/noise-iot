@@ -127,3 +127,45 @@ select s.node_id,
 from sessions s
 left join clips c using (node_id, session_id)
 group by s.node_id, s.session_id, s.site, s.started_at, s.clips_sent;
+
+-- Output of classifier.py: one row per one-second clip (blocks 2k and 2k+1 of an
+-- estacion/ session) and model. model_version is the training run folder, or
+-- 'rule-only' when no model is loaded (then only the RMS rule is applied).
+create table if not exists predictions (
+    node_id         text        not null,
+    session_id      text        not null,
+    second_idx      integer     not null,
+    model_version   text        not null,
+    captured_at     timestamptz,           -- session start + second_idx seconds
+    status          text        not null,  -- ok | excluded (failed the quality check)
+    reason          text,                  -- why it was excluded
+    rms_dbfs        real,                  -- RMS of the mean-removed clip, dB re ADC full scale
+    threshold_dbfs  real,
+    rule_label      smallint,              -- 1 = ruido by the RMS threshold
+    prob_noise      real,                  -- network probability of class 1
+    predicted_label smallint,              -- network output (null in rule-only)
+    computed_at     timestamptz not null default now(),
+    primary key (node_id, session_id, second_idx, model_version)
+);
+create index if not exists predictions_time_idx on predictions (captured_at);
+
+-- Predictions with the site, for the dashboard.
+create or replace view predictions_timed as
+select p.*, s.site
+from predictions p
+left join sessions s using (node_id, session_id);
+
+-- Last hour per node and model: how much is noise and how much failed the
+-- quality check (blank audio, missing blocks). For the dashboard and alerts.
+create or replace view node_status as
+select node_id,
+       model_version,
+       max(captured_at)                                    as last_clip_at,
+       count(*)                                            as clips,
+       count(*) filter (where status = 'excluded')         as excluded,
+       round(100.0 * count(*) filter (where status = 'excluded') / count(*), 1) as excluded_pct,
+       round(100.0 * avg(coalesce(predicted_label, rule_label)) filter (where status = 'ok'), 1) as noise_pct,
+       round(avg(rms_dbfs)::numeric, 1)                    as rms_dbfs_avg
+from predictions
+where captured_at > now() - interval '1 hour'
+group by node_id, model_version;

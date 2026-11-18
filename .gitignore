@@ -22,3 +22,8 @@ Thumbs.db
 
 # Local Claude Code settings
 .claude/settings.local.json
+
+# Datasets and training runs (analysis/labeling, analysis/pytorch_audio)
+data/noise-data/
+*.pt
+*.npz

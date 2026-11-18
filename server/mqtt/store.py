@@ -177,3 +177,33 @@ class PgStore:
                 """,
                 dict(fields, node_id=node_id, session_id=session_id, meta=json.dumps(meta)),
             )
+
+    # ------------------------------------------------ classifier.py output ---
+
+    def prediction_indexes(self, node_id, session_id, model_version):
+        """second_idx values already stored for a session and model."""
+        with self._cursor() as cur:
+            cur.execute(
+                "select second_idx from predictions where node_id = %s and session_id = %s "
+                "and model_version = %s",
+                (node_id, session_id, model_version),
+            )
+            return {r[0] for r in cur.fetchall()}
+
+    def predictions(self, rows):
+        """Insert classifier rows; a row already stored is left as it is."""
+        if not rows:
+            return
+        with self._cursor() as cur:
+            cur.executemany(
+                """
+                insert into predictions (node_id, session_id, second_idx, model_version,
+                    captured_at, status, reason, rms_dbfs, threshold_dbfs, rule_label,
+                    prob_noise, predicted_label)
+                values (%(node_id)s, %(session_id)s, %(second_idx)s, %(model_version)s,
+                    %(captured_at)s, %(status)s, %(reason)s, %(rms_dbfs)s, %(threshold_dbfs)s,
+                    %(rule_label)s, %(prob_noise)s, %(predicted_label)s)
+                on conflict (node_id, session_id, second_idx, model_version) do nothing
+                """,
+                rows,
+            )

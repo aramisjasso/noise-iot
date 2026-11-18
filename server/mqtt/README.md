@@ -16,6 +16,7 @@ Nodo ESP32 ──MQTT QoS 1──▶ Mosquitto ──▶ subscriber.py ──▶
 | `store.py` | Escribe en PostgreSQL; los duplicados de QoS 1 se ignoran por llave. |
 | `subscriber.py` | Escucha `noise/+/+/#` y conecta todo lo anterior. Calcula los 30 rasgos de cada clip con `analysis/features/mfcc.py`. |
 | `estacion.py` | Recibe los tópicos `estacion/#` del firmware de Arduino de Jesús: guarda cada sesión como archivos, igual que su receptor TCP, y la mete a las mismas tablas. |
+| `classifier.py` | Clasifica cada segundo de audio que llega (regla RMS y, si hay modelo, la red de Miguel) y lo guarda en `predictions`. |
 | `.env.example` | Plantilla de la configuración (broker, base de datos, carpetas de audio). |
 
 ## Qué se guarda de cada clip
@@ -61,6 +62,34 @@ mensaje `inicio` (`inicio_recibido`; PubSubClient lo descarta si pasa de 256 byt
 llamó `mqtt.setBufferSize(1024)`). Un bloque que no llegó queda en ceros en su posición del
 `.u16`. Si nunca llega `fin`, la sesión se cierra como incompleta al empezar la siguiente del
 mismo dispositivo o tras 15 minutos sin mensajes.
+
+## Clasificador (`classifier.py`)
+
+Corre aparte del suscriptor. Cada 15 s revisa las sesiones de `ESTACION_DIR` que recibieron
+bloques en las últimas 24 h y, por cada fragmento de 1 s nuevo (bloques 2k y 2k+1):
+
+1. Revisa su calidad con las reglas de Miguel (`analysis/labeling/clips.py`).
+2. Calcula `rms_dbfs` y la etiqueta de la regla con `NOISE_THRESHOLD_DBFS`.
+3. Si `MODEL_RUN_DIR` apunta a una carpeta de `analysis/pytorch_audio/train.py`, corre la red
+   y guarda su probabilidad y su etiqueta. Si está vacío, `model_version = rule-only`.
+
+Un fragmento al que le falta un bloque espera; cuando la sesión cierra se guarda como
+`excluded` con `reason = missing_block`. El suscriptor escribe cada bloque a disco al
+recibirlo, así que el resultado aparece segundos después de que llega el audio.
+
+| Tabla o vista | Para qué |
+|---|---|
+| `predictions` | Una fila por fragmento y modelo: estado de calidad, `rms_dbfs`, `rule_label`, `prob_noise`, `predicted_label`, `captured_at`. |
+| `predictions_timed` | Lo mismo con el sitio, para graficar. |
+| `node_status` | Última hora por nodo: hora del último fragmento, % excluido (audio en blanco, bloques perdidos), % de ruido y RMS promedio. Sirve para las alertas. |
+
+```
+python server/mqtt/classifier.py --once        # una pasada, para probar
+python server/mqtt/classifier.py --once --all  # también las sesiones viejas
+python server/mqtt/classifier.py               # se queda corriendo
+```
+
+Requiere `torch` solo si hay modelo. Cómo se etiqueta y se entrena: `analysis/labeling/README.md`.
 
 ## Instalación en la laptop (Windows, una sola vez)
 

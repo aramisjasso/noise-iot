@@ -113,7 +113,11 @@ class StationSession:
         # Each block goes to its own position: a missing block leaves zeros.
         self.f_audio.seek(seq * self.block * 2)
         self.f_audio.write(samples)
+        # Flushed per block so classifier.py can read the session while it records:
+        # a row in bloques.csv means its samples are already in the .u16.
+        self.f_audio.flush()
         self.blocks.writerow([_now(), seq, padded, len(samples)])
+        self.f_blocks.flush()
         self.received += 1
         self.padded += padded
         self.seqs.add(seq)
