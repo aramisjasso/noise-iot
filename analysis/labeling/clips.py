@@ -12,11 +12,17 @@ src/audio/process_noise_data.py:
 - all_zero_block / constant_block: a block is all zeros or flat
 - zero_run_ge_100: 100 or more consecutive zero samples
 
-Preprocessing is the one of analysis/pytorch_audio/preprocess.py: remove the
-clip mean and divide by the ADC full scale (4095 for 12 bits).
+Electrical noise is removed before anything else (remove_electrical_noise):
+the linear trend of the clip, everything below 100 Hz (DC, slow drift of the amplifier and the 60 Hz of the
+mains) and a 4 Hz band around each 60 Hz harmonic up to 1020 Hz. In the
+13 Nov sessions most of the power of the quiet clips was drift under 10 Hz,
+and esp32-04 had clear peaks at 60, 180 and 300 Hz.
 
-The labeling measure is the RMS of the mean-removed clip in dB relative to the
-ADC full scale (dBFS): 20 * log10(rms / 4095). It is not calibrated sound
+Preprocessing is the one of analysis/pytorch_audio/preprocess.py on the filtered
+clip: remove the mean and divide by the ADC full scale (4095 for 12 bits).
+
+The labeling measure is the RMS of the filtered clip in dB relative to the ADC
+full scale (dBFS): 20 * log10(rms / 4095). It is not calibrated sound
 pressure, and nodes with different gain give different values for the same sound.
 """
 
@@ -33,6 +39,10 @@ DEFAULT_BLOCK = 4000
 DEFAULT_ADC_BITS = 12
 CLIP_BLOCKS = 2
 ZERO_RUN_LIMIT = 100
+HIGHPASS_HZ = 100
+MAINS_HZ = 60
+MAINS_HARMONICS_UP_TO_HZ = 1020
+MAINS_NOTCH_HALF_WIDTH_HZ = 2
 
 
 def session_params(folder):
@@ -84,17 +94,35 @@ def check_clip(blocks):
     return sorted(set(reasons))
 
 
-def preprocess(samples, adc_bits=DEFAULT_ADC_BITS):
-    """float32 network input: clip mean removed, divided by the ADC full scale."""
-    x = samples.astype(np.float32)
-    x -= x.mean()
-    x /= float((1 << adc_bits) - 1)
-    return x
+def remove_electrical_noise(samples, fs=DEFAULT_FS):
+    """Clip without DC, drift and mains hum (float64, same length).
 
-
-def rms_dbfs(samples, adc_bits=DEFAULT_ADC_BITS):
+    FFT of the whole clip: bins under HIGHPASS_HZ and within
+    MAINS_NOTCH_HALF_WIDTH_HZ of each 60 Hz harmonic up to
+    MAINS_HARMONICS_UP_TO_HZ are set to zero.
+    """
     x = samples.astype(np.float64)
-    x -= x.mean()
+    # A straight line is removed first: drift over the clip would otherwise
+    # leak into every frequency of the FFT.
+    n = np.arange(len(x))
+    x = x - np.polyval(np.polyfit(n, x, 1), n)
+    spectrum = np.fft.rfft(x)
+    freqs = np.fft.rfftfreq(len(x), 1.0 / fs)
+    cut = freqs < HIGHPASS_HZ
+    for k in range(1, MAINS_HARMONICS_UP_TO_HZ // MAINS_HZ + 1):
+        cut |= np.abs(freqs - k * MAINS_HZ) <= MAINS_NOTCH_HALF_WIDTH_HZ
+    spectrum[cut] = 0
+    return np.fft.irfft(spectrum, n=len(x))
+
+
+def preprocess(samples, adc_bits=DEFAULT_ADC_BITS, fs=DEFAULT_FS):
+    """float32 network input: electrical noise removed, divided by the ADC full scale."""
+    x = remove_electrical_noise(samples, fs)
+    return (x / float((1 << adc_bits) - 1)).astype(np.float32)
+
+
+def rms_dbfs(samples, adc_bits=DEFAULT_ADC_BITS, fs=DEFAULT_FS):
+    x = remove_electrical_noise(samples, fs)
     rms = math.sqrt(float(np.mean(x * x)) + 1e-12)
     return 20.0 * math.log10(rms / ((1 << adc_bits) - 1))
 

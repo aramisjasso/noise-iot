@@ -35,7 +35,7 @@ def block(kind, seed):
     rng = np.random.default_rng(seed)
     t = np.arange(BLOCK) / FS
     if kind == "loud":
-        x = 1760 + 400 * np.sin(2 * np.pi * (300 + 50 * (seed % 7)) * t) + rng.normal(0, 5, BLOCK)
+        x = 1760 + 400 * np.sin(2 * np.pi * (310 + 40 * (seed % 7)) * t) + rng.normal(0, 5, BLOCK)
     elif kind == "zero":
         x = np.zeros(BLOCK)
     else:
@@ -92,12 +92,20 @@ class ClipsTest(unittest.TestCase):
         holed[100:250] = 0
         self.assertEqual(clips.check_clip([holed, q]), ["zero_run_ge_100"])
 
-    def test_preprocess_matches_miguel(self):
+    def test_electrical_noise_is_ignored(self):
+        # 60 Hz hum, its 3rd harmonic and a slow drift add nothing to the level
+        t = np.arange(2 * BLOCK) / FS
+        q = np.concatenate([block("quiet", 1), block("quiet", 2)]).astype(float)
+        hum = q + 300 * np.sin(2 * np.pi * 60 * t) + 200 * np.sin(2 * np.pi * 180 * t) + 300 * t
+        hum = np.clip(np.round(hum), 0, 4095).astype("<u2")
+        self.assertAlmostEqual(clips.rms_dbfs(hum), clips.rms_dbfs(q.astype("<u2")), delta=0.5)
+
+    def test_preprocess_is_filtered_and_scaled(self):
         x = block("loud", 3)
-        y = clips.preprocess(x)
-        self.assertEqual(y.dtype, np.float32)
+        y = clips.preprocess(np.concatenate([x, x]))
+        self.assertEqual((y.dtype, y.shape), (np.float32, (8000,)))
         self.assertAlmostEqual(float(y.mean()), 0.0, places=5)
-        np.testing.assert_allclose(y, (x - x.astype(np.float32).mean()) / 4095.0, rtol=1e-5, atol=1e-7)
+        self.assertAlmostEqual(float(np.abs(y).max()), 400 / 4095.0, delta=0.01)
 
 
 class SessionTest(unittest.TestCase):

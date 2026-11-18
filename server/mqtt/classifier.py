@@ -127,12 +127,12 @@ class Classifier:
                 "predicted_label": None,
             }
             if c["samples"] is not None:
-                row["rms_dbfs"] = clips.rms_dbfs(c["samples"], c["adc_bits"])
+                row["rms_dbfs"] = clips.rms_dbfs(c["samples"], c["adc_bits"], c["fs"])
             if c["status"] == "ok":
                 row["rule_label"] = int(row["rms_dbfs"] >= self.threshold)
                 if self.network is not None:
                     ok_rows.append(row)
-                    waveforms.append(clips.preprocess(c["samples"], c["adc_bits"]))
+                    waveforms.append(clips.preprocess(c["samples"], c["adc_bits"], c["fs"]))
             rows.append(row)
         if waveforms:
             probs = self.network.predict(np.stack(waveforms))
@@ -178,7 +178,7 @@ def main(argv=None):
     from store import PgStore
 
     estacion_dir = os.environ["ESTACION_DIR"]
-    threshold = float(os.environ.get("NOISE_THRESHOLD_DBFS", "-20"))
+    threshold = float(os.environ.get("NOISE_THRESHOLD_DBFS", "-22"))
     run_dir = os.environ.get("MODEL_RUN_DIR", "").strip()
     network = Network(run_dir) if run_dir else None
     poll = float(os.environ.get("CLASSIFIER_POLL_S", "15"))

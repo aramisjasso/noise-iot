@@ -42,7 +42,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import clips  # noqa: E402
 
 REPO_DIR = Path(__file__).resolve().parents[2]
-RULE = "rms_dbfs >= threshold (mean-removed clip, dB re ADC full scale)"
+RULE = "rms_dbfs >= threshold (clip without DC, <100 Hz and 60 Hz harmonics; dB re ADC full scale)"
 
 
 def iter_sessions(estacion_dir, nodes=None):
@@ -73,9 +73,9 @@ def collect(estacion_dir, max_per_session, seed, nodes=None, keep_samples=True):
             usable = sorted(rng.sample(usable, max_per_session), key=lambda c: c["second_idx"])
         for c in usable:
             row = {"node": node, "session": session, "second_idx": c["second_idx"],
-                   "fs": c["fs"], "rms_dbfs": clips.rms_dbfs(c["samples"], c["adc_bits"])}
+                   "fs": c["fs"], "rms_dbfs": clips.rms_dbfs(c["samples"], c["adc_bits"], c["fs"])}
             if keep_samples:
-                row["waveform"] = clips.preprocess(c["samples"], c["adc_bits"])
+                row["waveform"] = clips.preprocess(c["samples"], c["adc_bits"], c["fs"])
                 row["raw"] = c["samples"]
             rows.append(row)
     return rows, excluded

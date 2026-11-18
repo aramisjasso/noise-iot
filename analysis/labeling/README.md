@@ -12,7 +12,10 @@ nivel RMS, y deja el conjunto en el formato que espera la red de Miguel
 - Un fragmento son dos bloques seguidos de 0.5 s de una sesión de `estacion/`.
 - Se descarta si le falta un bloque, si un bloque está en ceros o plano, o si tiene 100 o más
   ceros seguidos (las mismas reglas de `process_noise_data.py` de Miguel).
-- Su nivel es el RMS sin componente DC, en dB respecto a la escala completa del ADC:
+- Antes de medir se quita el ruido eléctrico: la tendencia lineal, todo lo que está debajo de
+  100 Hz (DC, deriva del amplificador) y una banda de ±2 Hz en cada armónico de 60 Hz hasta
+  1020 Hz. La red recibe el fragmento ya filtrado.
+- Su nivel es el RMS del fragmento filtrado, en dB respecto a la escala completa del ADC:
   `rms_dbfs = 20·log10(rms / 4095)`. No es un nivel calibrado en dB SPL.
 - `label = 1` si `rms_dbfs ≥ umbral`.
 
