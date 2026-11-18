@@ -100,12 +100,15 @@ class ClipsTest(unittest.TestCase):
         hum = np.clip(np.round(hum), 0, 4095).astype("<u2")
         self.assertAlmostEqual(clips.rms_dbfs(hum), clips.rms_dbfs(q.astype("<u2")), delta=0.5)
 
-    def test_preprocess_is_filtered_and_scaled(self):
-        x = block("loud", 3)
-        y = clips.preprocess(np.concatenate([x, x]))
+    def test_preprocess_is_energy_envelope_of_filtered_clip(self):
+        x = np.concatenate([block("loud", 3), block("loud", 3)])
+        y = clips.preprocess(x)
         self.assertEqual((y.dtype, y.shape), (np.float32, (8000,)))
-        self.assertAlmostEqual(float(y.mean()), 0.0, places=5)
-        self.assertAlmostEqual(float(np.abs(y).max()), 400 / 4095.0, delta=0.01)
+        self.assertTrue((y >= 0).all())
+        # mean of the envelope is the squared RMS of the filtered clip, times the gain squared
+        rms = 10 ** (clips.rms_dbfs(x) / 20)
+        expected = (rms * clips.INPUT_GAIN) ** 2
+        self.assertAlmostEqual(float(y.mean()), expected, delta=0.02 * expected)  # window edges
 
 
 class SessionTest(unittest.TestCase):

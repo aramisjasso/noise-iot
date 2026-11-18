@@ -18,8 +18,9 @@ mains) and a 4 Hz band around each 60 Hz harmonic up to 1020 Hz. In the
 13 Nov sessions most of the power of the quiet clips was drift under 10 Hz,
 and esp32-04 had clear peaks at 60, 180 and 300 Hz.
 
-Preprocessing is the one of analysis/pytorch_audio/preprocess.py on the filtered
-clip: remove the mean and divide by the ADC full scale (4095 for 12 bits).
+Network input (preprocess): the energy of each sample of the filtered clip,
+(x / 4095 * 16) ** 2 smoothed over 50 ms (energy envelope), 8000 values like Miguel's waveform input, so his model,
+train.py and test.py are unchanged.
 
 The labeling measure is the RMS of the filtered clip in dB relative to the ADC
 full scale (dBFS): 20 * log10(rms / 4095). It is not calibrated sound
@@ -115,10 +116,26 @@ def remove_electrical_noise(samples, fs=DEFAULT_FS):
     return np.fft.irfft(spectrum, n=len(x))
 
 
+INPUT_GAIN = 16  # so a clip near the usual thresholds gives energies around 1
+ENVELOPE_MS = 50
+
+
 def preprocess(samples, adc_bits=DEFAULT_ADC_BITS, fs=DEFAULT_FS):
-    """float32 network input: electrical noise removed, divided by the ADC full scale."""
-    x = remove_electrical_noise(samples, fs)
-    return (x / float((1 << adc_bits) - 1)).astype(np.float32)
+    """float32 network input: energy envelope of the filtered clip.
+
+    (filtered / full scale * INPUT_GAIN) ** 2, smoothed with a 50 ms moving average. The label compares the mean of
+    the squared signal with a fixed number, so with this input it is a weighted
+    sum, which one linear layer can learn. On the raw waveform positive and
+    negative samples cancel out and the network does not learn it.
+    """
+    x = remove_electrical_noise(samples, fs) / float((1 << adc_bits) - 1) * INPUT_GAIN
+    energy = x * x
+    # 50 ms moving average (energy envelope): each value is the local energy, not
+    # one noisy sample, so the network needs far fewer examples to learn the mean.
+    window = max(1, fs * ENVELOPE_MS // 1000)
+    padded = np.pad(energy, (window // 2, window - 1 - window // 2), mode="edge")
+    envelope = np.convolve(padded, np.ones(window) / window, mode="valid")
+    return envelope.astype(np.float32)
 
 
 def rms_dbfs(samples, adc_bits=DEFAULT_ADC_BITS, fs=DEFAULT_FS):
