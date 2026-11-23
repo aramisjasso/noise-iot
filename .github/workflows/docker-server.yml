@@ -1,7 +1,11 @@
 # Construye la imagen de server/docker/Dockerfile en cada push que toque el
-# servidor. Solo en main se publica en GHCR (ghcr.io/aramisjasso/noise-iot-server);
-# en las demás ramas y en los PR solo se verifica que compile.
+# servidor. Solo en DEPLOY_BRANCH (la rama que corre en el servidor de AWS) se
+# publica en GHCR (ghcr.io/aramisjasso/noise-iot-server); en las demás ramas y
+# en los PR solo se verifica que compile.
 name: docker-server
+
+env:
+  DEPLOY_BRANCH: refs/heads/leo-cloud
 
 on:
   push:
@@ -41,7 +45,7 @@ jobs:
       - uses: docker/setup-buildx-action@v3
 
       - uses: docker/login-action@v3
-        if: github.ref == 'refs/heads/main'
+        if: github.ref == env.DEPLOY_BRANCH
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -52,14 +56,14 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository_owner }}/noise-iot-server
           tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=latest,enable=${{ github.ref == env.DEPLOY_BRANCH }}
             type=sha,prefix=sha-
 
       - uses: docker/build-push-action@v6
         with:
           context: .
           file: server/docker/Dockerfile
-          push: ${{ github.ref == 'refs/heads/main' }}
+          push: ${{ github.ref == env.DEPLOY_BRANCH }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha

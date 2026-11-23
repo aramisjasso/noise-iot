@@ -96,11 +96,13 @@ cualquiera); 1 vCPU / 1-2 GB RAM sobra para este volumen de nodos.
 
 `.github/workflows/docker-server.yml` corre las pruebas de `server/mqtt/tests` y
 construye la imagen cada vez que un push toca el servidor (`server/`,
-`analysis/features|labeling|pytorch_audio`, `contracts/mqtt`). **Solo en `main`**
-la publica en `ghcr.io/aramisjasso/noise-iot-server` con las etiquetas `latest`
-y `sha-<commit>`. En las demás ramas y en los PR solo verifica que compile.
+`analysis/features|labeling|pytorch_audio`, `contracts/mqtt`). **Solo en
+`leo-cloud`** (la rama que corre en el servidor, `DEPLOY_BRANCH` en el
+workflow) la publica en `ghcr.io/aramisjasso/noise-iot-server` con las
+etiquetas `latest` y `sha-<commit>`. En las demás ramas y en los PR solo
+verifica que compile.
 
-Para actualizar la VM después de un merge a `main`:
+Para actualizar la VM después de un push a `leo-cloud`:
 
 ```bash
 git pull

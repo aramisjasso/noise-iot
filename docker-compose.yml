@@ -16,6 +16,9 @@ services:
       POSTGRES_USER: noise_app
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
       POSTGRES_DB: noise_iot
+    ports:
+      # Solo en el loopback de la máquina: se llega por túnel SSH, nunca desde internet.
+      - "127.0.0.1:5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./server/mqtt/schema.sql:/docker-entrypoint-initdb.d/01-schema-mqtt.sql:ro
