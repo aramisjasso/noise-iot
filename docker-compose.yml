@@ -1,0 +1,91 @@
+services:
+  mosquitto:
+    image: eclipse-mosquitto:2
+    restart: unless-stopped
+    ports:
+      - "1883:1883"
+    volumes:
+      - ./server/docker/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - mosquitto_data:/mosquitto/data
+      - mosquitto_log:/mosquitto/log
+
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: noise_app
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: noise_iot
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./server/mqtt/schema.sql:/docker-entrypoint-initdb.d/01-schema-mqtt.sql:ro
+      - ./server/monitor/schema.sql:/docker-entrypoint-initdb.d/02-schema-monitor.sql:ro
+
+  subscriber:
+    image: ghcr.io/aramisjasso/noise-iot-server:${IMAGE_TAG:-latest}
+    build:
+      context: .
+      dockerfile: server/docker/Dockerfile
+    restart: unless-stopped
+    command: ["python", "server/mqtt/subscriber.py"]
+    depends_on:
+      - mosquitto
+      - postgres
+    environment:
+      MQTT_HOST: mosquitto
+      MQTT_PORT: "1883"
+      MQTT_CLIENT_ID: noise-subscriber
+      PG_DSN: host=postgres port=5432 dbname=noise_iot user=noise_app password=${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      AUDIO_DIR: /data/audio
+      ESTACION_DIR: /data/estacion
+      ESTACION_SITE: ${ESTACION_SITE:-tepic}
+    volumes:
+      - noise_audio:/data/audio
+      - noise_estacion:/data/estacion
+
+  classifier:
+    image: ghcr.io/aramisjasso/noise-iot-server:${IMAGE_TAG:-latest}
+    build:
+      context: .
+      dockerfile: server/docker/Dockerfile
+    restart: unless-stopped
+    command: ["python", "server/mqtt/classifier.py"]
+    depends_on:
+      - postgres
+    environment:
+      PG_DSN: host=postgres port=5432 dbname=noise_iot user=noise_app password=${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      ESTACION_DIR: /data/estacion
+      NOISE_THRESHOLD_DBFS: ${NOISE_THRESHOLD_DBFS:--22}
+      MODEL_RUN_DIR: ${MODEL_RUN_DIR:-}
+      CLASSIFIER_POLL_S: ${CLASSIFIER_POLL_S:-15}
+      CLASSIFIER_LOOKBACK_H: ${CLASSIFIER_LOOKBACK_H:-24}
+    volumes:
+      - noise_estacion:/data/estacion
+
+  monitor:
+    image: ghcr.io/aramisjasso/noise-iot-server:${IMAGE_TAG:-latest}
+    build:
+      context: .
+      dockerfile: server/docker/Dockerfile
+    restart: unless-stopped
+    command: ["python", "server/monitor/monitor.py"]
+    profiles: ["monitor"]
+    depends_on:
+      - mosquitto
+      - postgres
+    environment:
+      MQTT_HOST: mosquitto
+      MQTT_PORT: "1883"
+      PG_DSN: host=postgres port=5432 dbname=noise_iot user=noise_app password=${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      DISCORD_WEBHOOK_URL: ${DISCORD_WEBHOOK_URL:-}
+      DISCORD_ROLE_ID: ${DISCORD_ROLE_ID:-}
+      HEALTHCHECKS_PING_URL: ${HEALTHCHECKS_PING_URL:-}
+      MONITOR_POLL_S: ${MONITOR_POLL_S:-15}
+      MQTT_DISCONNECT_ALERT_MIN: ${MQTT_DISCONNECT_ALERT_MIN:-20}
+
+volumes:
+  mosquitto_data:
+  mosquitto_log:
+  postgres_data:
+  noise_audio:
+  noise_estacion:
