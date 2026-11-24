@@ -134,7 +134,9 @@ def preprocess(samples, adc_bits=DEFAULT_ADC_BITS, fs=DEFAULT_FS):
     # one noisy sample, so the network needs far fewer examples to learn the mean.
     window = max(1, fs * ENVELOPE_MS // 1000)
     padded = np.pad(energy, (window // 2, window - 1 - window // 2), mode="edge")
-    envelope = np.convolve(padded, np.ones(window) / window, mode="valid")
+    # Moving average with a cumulative sum: same result as np.convolve, ~100x faster
+    csum = np.concatenate(([0.0], np.cumsum(padded, dtype=np.float64)))
+    envelope = (csum[window:] - csum[:-window]) / window
     return envelope.astype(np.float32)
 
 
