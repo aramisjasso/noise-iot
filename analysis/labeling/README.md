@@ -1,8 +1,7 @@
 # Etiquetas por umbral RMS
 
 `label_rms.py` etiqueta cada fragmento de 1 s como **ruido (1)** o **no ruido (0)** según su
-nivel RMS, y deja el conjunto en el formato que espera la red de Miguel
-(`analysis/pytorch_audio/train.py`), así que su entrenamiento y su prueba corren sin cambios.
+nivel RMS, y deja el conjunto en el formato que leen `analysis/pytorch_audio/train.py` y `test.py`.
 
 `clips.py` corta, revisa y escala el audio. Lo usan este script y el clasificador del server
 (`server/mqtt/classifier.py`), para que el entrenamiento y la operación traten el audio igual.
@@ -11,13 +10,13 @@ nivel RMS, y deja el conjunto en el formato que espera la red de Miguel
 
 - Un fragmento son dos bloques seguidos de 0.5 s de una sesión de `estacion/`.
 - Se descarta si le falta un bloque, si un bloque está en ceros o plano, o si tiene 100 o más
-  ceros seguidos (las mismas reglas de `process_noise_data.py` de Miguel).
+  ceros seguidos.
 - Antes de medir se quita el ruido eléctrico: la tendencia lineal, todo lo que está debajo de
   100 Hz (DC, deriva del amplificador) y una banda de ±2 Hz en cada armónico de 60 Hz hasta
   1020 Hz.
 - La red recibe la envolvente de energía del fragmento filtrado: la señal al cuadrado,
-  promediada en ventanas de 50 ms (8 000 valores, igual que la forma de onda de antes, así que
-  `model.py`, `train.py` y `test.py` de Miguel no cambian). Con la forma de onda cruda la red no
+  promediada en ventanas de 50 ms (8 000 valores, el tamaño de entrada de `model.py`). Con la
+  forma de onda cruda la red no
   aprendía la regla: en las sesiones del 13 de noviembre acertaba 66 %, menos que responder
   siempre "no ruido". Con la envolvente acierta 97.6 % (F1 de ruido 0.95) con el umbral −22.
 - Su nivel es el RMS del fragmento filtrado, en dB respecto a la escala completa del ADC:
@@ -36,9 +35,9 @@ Desde la raíz del repo:
 python analysis/labeling/label_rms.py --estacion-dir C:\noise-data\estacion --sweep -30 -26 -22 -18 -14
 
 # 2. Armar el conjunto con el umbral elegido y exportar WAV de ejemplo para escucharlos
-python analysis/labeling/label_rms.py --estacion-dir C:\noise-data\estacion --threshold -22 --max-per-session 0 --examples 10
+python analysis/labeling/label_rms.py --estacion-dir C:\noise-data\estacion --threshold -22 --max-per-session 4 --examples 10
 
-# 3. Entrenar y probar con el código de Miguel
+# 3. Entrenar y probar
 python analysis/pytorch_audio/train.py --data-dir data/noise-data/rms_-22 --epochs 500 --patience 40
 python analysis/pytorch_audio/test.py --run-dir <carpeta que imprime train.py>
 ```

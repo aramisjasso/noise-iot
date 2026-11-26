@@ -5,7 +5,7 @@ compara cómo cambia:
 
 | Variante | Entrada |
 |---|---|
-| Sonido | envolvente de energía de 1 s (8 000 valores), la red de Miguel tal cual |
+| Sonido | envolvente de energía de 1 s (8 000 valores), la red de solo sonido |
 | Sonido + temperatura | lo mismo y la temperatura de ese segundo |
 | Sonido + humedad | lo mismo y la humedad |
 | Sonido + temperatura + humedad | lo mismo y las dos |
@@ -14,8 +14,8 @@ compara cómo cambia:
   ≥ −22 dBFS (`analysis/labeling`).
 - **Clima de cada segundo:** interpolado entre la lectura del DHT11 antes y después de la sesión.
 - **Cómo entra el clima:** la red procesa el audio igual (8 000 → 32) y la temperatura y la humedad,
-  estandarizadas, se suman a esas 32 neuronas antes de la capa de salida. Así la variante de sonido
-  es exactamente la red de Miguel.
+  estandarizadas, se concatenan a las 32 salidas de la capa oculta y entran directo a la capa de
+  salida (33 o 34 entradas). Así la variante de sonido es exactamente la red de solo sonido.
 - **Separación por tiempo** (hora de Tepic): entrenamiento antes de `--val-from`, validación hasta
   `--test-from` y prueba de ahí en adelante. Las cuatro variantes usan los mismos segundos.
 - **5 semillas por variante:** se reporta el promedio y la desviación, para distinguir una

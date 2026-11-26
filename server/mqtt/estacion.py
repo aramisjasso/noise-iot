@@ -1,9 +1,7 @@
-"""Receiver for the estacion/ topics of Jesús's Arduino firmware.
+"""Receiver for the estacion/ topics of the Arduino firmware.
 
-firmware/ESP32/esp32_mqtt_5min.ino publishes in its own format (estacion/<device>/...),
-not in contracts/mqtt.md. This module stores it the same way his TCP receiver
-(firmware/experiments/tcp_v1/receptor_pc.py) did, so he can check that the data
-arrives complete:
+firmware/ESP32 publishes each session on estacion/<device>/... This module stores
+every session as files, so it can be checked that the data arrives complete:
 
     <ESTACION_DIR>/<device>/<session>/
         audio_crudo.u16   ADC samples as received (uint16 little-endian, 8 kHz)

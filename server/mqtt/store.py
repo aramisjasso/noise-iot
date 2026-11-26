@@ -37,44 +37,6 @@ class PgStore:
                 (node_id, session_id, site),
             )
 
-    def session_start(self, site, msg):
-        with self._cursor() as cur:
-            cur.execute(
-                """
-                insert into sessions (node_id, session_id, site, started_at, firmware_version,
-                    fs, adc_bits, clip_samples, session_s, mic_model, gain_setting, dht_model)
-                values (%(node_id)s, %(session_id)s, %(site)s, %(started_at)s,
-                    %(firmware_version)s, %(fs)s, %(adc_bits)s, %(clip_samples)s,
-                    %(session_s)s, %(mic_model)s, %(gain_setting)s, %(dht_model)s)
-                on conflict (node_id, session_id) do update set
-                    site = excluded.site,
-                    started_at = excluded.started_at,
-                    firmware_version = excluded.firmware_version,
-                    fs = excluded.fs,
-                    adc_bits = excluded.adc_bits,
-                    clip_samples = excluded.clip_samples,
-                    session_s = excluded.session_s,
-                    mic_model = excluded.mic_model,
-                    gain_setting = excluded.gain_setting,
-                    dht_model = excluded.dht_model
-                """,
-                dict(msg, site=site),
-            )
-
-    def session_end(self, site, msg):
-        self.ensure_session(site, msg["node_id"], msg["session_id"])
-        with self._cursor() as cur:
-            cur.execute(
-                """
-                update sessions set ended_at = %(ended_at)s, duration_ms = %(duration_ms)s,
-                    clips_captured = %(clips_captured)s, clips_sent = %(clips_sent)s,
-                    clips_failed = %(clips_failed)s, late_samples = %(late_samples)s,
-                    dht_ok = %(dht_ok)s, dht_failed = %(dht_failed)s
-                where node_id = %(node_id)s and session_id = %(session_id)s
-                """,
-                msg,
-            )
-
     def climate(self, site, msg):
         self.ensure_session(site, msg["node_id"], msg["session_id"])
         with self._cursor() as cur:
@@ -87,14 +49,6 @@ class PgStore:
                 """,
                 msg,
             )
-
-    def clip_exists(self, node_id, session_id, clip_idx):
-        with self._cursor() as cur:
-            cur.execute(
-                "select 1 from clips where node_id = %s and session_id = %s and clip_idx = %s",
-                (node_id, session_id, clip_idx),
-            )
-            return cur.fetchone() is not None
 
     def clip(self, site, node_id, row, features, feature_version):
         """Insert a clip and its features in one transaction."""

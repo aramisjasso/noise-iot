@@ -186,7 +186,7 @@ class LabelRmsTest(unittest.TestCase):
         self.assertIn("40.0 %", text)  # 2 loud of 5 usable seconds per session
         self.assertIn("0.0 %", text)
 
-    def test_dataset_has_miguel_format(self):
+    def test_dataset_has_training_format(self):
         out_dir = os.path.join(self.tmp.name, "ds")
         with redirect_stdout(io.StringIO()):
             label_rms.main(["--estacion-dir", self.base, "--threshold", "-40", "--out", out_dir,
@@ -209,7 +209,7 @@ class LabelRmsTest(unittest.TestCase):
 
     @unittest.skipUnless(__import__("importlib").util.find_spec("torch"), "torch not installed")
     def test_train_and_classify_with_network(self):
-        # Miguel's train.py, unchanged, on the labeler output; then the classifier loads it.
+        # train.py on the labeler output; then the classifier loads the model.
         out_dir = os.path.join(self.tmp.name, "ds")
         with redirect_stdout(io.StringIO()):
             label_rms.main(["--estacion-dir", self.base, "--threshold", "-40", "--out", out_dir])

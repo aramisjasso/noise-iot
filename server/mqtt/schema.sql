@@ -1,4 +1,4 @@
--- Local PostgreSQL schema for the MQTT clip pipeline (contracts/mqtt.md).
+-- Local PostgreSQL schema of the server (subscriber.py, estacion.py, classifier.py).
 -- Safe to run more than once. Run it as the application user (noise_app):
 --   psql -U noise_app -d noise_iot -f server/mqtt/schema.sql
 --
@@ -169,36 +169,3 @@ select node_id,
 from predictions
 where captured_at > now() - interval '1 hour'
 group by node_id, model_version;
-
--- analysis/environment/compare_env.py: does temperature or humidity help predict
--- the % of noise of a session beyond hour, day and node? One run per execution.
-create table if not exists environment_runs (
-    run_id        text        primary key,
-    model_version text        not null,  -- predictions.model_version used as target
-    since         timestamptz not null,  -- only sessions from here on
-    info          jsonb,                 -- sessions, days, split, ranges of temp and humidity
-    created_at    timestamptz not null default now()
-);
-
-create table if not exists environment_predictions (
-    run_id         text        not null,
-    variant        text        not null,  -- base | temp | hum | both
-    node_id        text        not null,
-    session_id     text        not null,
-    started_at     timestamptz,
-    split          text        not null,  -- train | validation | test
-    noise_pct_real real        not null,  -- % of usable seconds labeled as noise
-    noise_pct_pred real        not null,
-    primary key (run_id, variant, node_id, session_id)
-);
-
-create table if not exists environment_metrics (
-    run_id      text    not null,
-    variant     text    not null,
-    node_id     text    not null,  -- a node, or 'all'
-    n_sessions  integer not null,  -- test sessions
-    mae_pp      real    not null,  -- mean absolute error, percentage points
-    mae_base_pp real    not null,
-    gain_pp     real    not null,  -- mae_base_pp - mae_pp; > 0 means better than the base
-    primary key (run_id, variant, node_id)
-);

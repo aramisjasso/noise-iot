@@ -11,10 +11,10 @@ Two modes:
     python analysis/labeling/label_rms.py --estacion-dir C:\\noise-data\\estacion --sweep -30 -26 -22 -18 -14
 
     # Build the dataset for analysis/pytorch_audio/train.py with one threshold.
-    python analysis/labeling/label_rms.py --estacion-dir C:\\noise-data\\estacion --threshold -20 --examples 10
+    python analysis/labeling/label_rms.py --estacion-dir C:\\noise-data\\estacion --threshold -22 --examples 10
 
-The dataset folder (default data/noise-data/rms_<threshold>) has the format of
-Miguel's preprocess.py, so his train.py and test.py run on it unchanged:
+The dataset folder (default data/noise-data/rms_<threshold>) has the format that
+analysis/pytorch_audio/train.py and test.py read:
 
     clips.npz       waveforms (float32, n x 8000), clip_ids, sample_rate
     metadata.csv    clip_id, station, session_id, session_group, start_s, ..., rms_dbfs

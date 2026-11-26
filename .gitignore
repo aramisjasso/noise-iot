@@ -7,10 +7,10 @@ __pycache__/
 # Jupyter
 .ipynb_checkpoints/
 
-# Firmware secrets (copy from config.example.py)
-firmware/config.py
+# Local Supabase CLI files from the first prototype (credentials)
+supabase/
 
-# Raw data and audio (stored in Drive, not in git)
+# Raw data and audio (not in git)
 data/raw/
 *.wav
 *.raw

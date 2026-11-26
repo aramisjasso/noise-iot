@@ -5,8 +5,7 @@ A session folder (written by server/mqtt/estacion.py) holds audio_crudo.u16 with
 every 0.5 s block at position seq * block, bloques.csv with the blocks that
 arrived and, once the session is closed, sesion.json.
 
-Clip k is blocks 2k and 2k+1. The quality rules are the ones of Miguel's
-src/audio/process_noise_data.py:
+Clip k is blocks 2k and 2k+1. A clip is excluded when:
 
 - missing_block: one of the two blocks is not in bloques.csv
 - all_zero_block / constant_block: a block is all zeros or flat
@@ -19,8 +18,8 @@ mains) and a 4 Hz band around each 60 Hz harmonic up to 1020 Hz. In the
 and esp32-04 had clear peaks at 60, 180 and 300 Hz.
 
 Network input (preprocess): the energy of each sample of the filtered clip,
-(x / 4095 * 16) ** 2 smoothed over 50 ms (energy envelope), 8000 values like Miguel's waveform input, so his model,
-train.py and test.py are unchanged.
+(x / 4095 * 16) ** 2 smoothed over 50 ms (energy envelope): 8000 values, the
+input size of analysis/pytorch_audio/model.py, train.py and test.py.
 
 The labeling measure is the RMS of the filtered clip in dB relative to the ADC
 full scale (dBFS): 20 * log10(rms / 4095). It is not calibrated sound

@@ -4,7 +4,7 @@ Materiales para **un** nodo. Hay que armar cinco (cuatro en Tepic y uno en Monte
 
 | Componente | Descripción | Valor / modelo | Cantidad por nodo | Notas |
 |---|---|---|---|---|
-| ESP32 | Tarjeta de desarrollo con MicroPython | TODO | TODO | El micrófono va a GPIO34 (ADC1) |
+| ESP32 | Tarjeta de desarrollo (firmware de Arduino) | TODO | TODO | El micrófono va a GPIO34 (ADC1) |
 | Micrófono electret | Cápsula electret con jack de 3.5 mm | TODO | TODO | |
 | Jack 3.5 mm | Conector hembra para el micrófono | TODO | TODO | |
 | MCP6022 | Amplificador operacional doble rail-to-rail | MCP6022 | TODO | Preamplificador y filtro |

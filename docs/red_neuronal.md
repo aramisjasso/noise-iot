@@ -125,7 +125,7 @@ probabilidad de "no ruido" y de "ruido"
 | Segundos por sesión | 4 elegidos al azar entre los que pasan la revisión de calidad |
 | Fragmentos totales | 16 551 |
 | Ruido / no ruido | 416 / 16 135 (2.5 % de ruido) |
-| Segundos descartados por calidad | ~35 000 de ~1.2 millones (< 3 %), sobre todo por bloques perdidos |
+| Segundos descartados por calidad | ~35 000 de ~630 000 (alrededor de 5 %), sobre todo por bloques perdidos |
 
 Se toman 4 segundos por sesión para que el conjunto quepa en memoria (cada fragmento ocupa 32 KB).
 
@@ -211,7 +211,8 @@ Script: `analysis/climate_variants/train_variants.py`.
 - **Misma etiqueta y misma preparación** que el clasificador en vivo.
 - **Clima de cada segundo:** interpolado entre la lectura del DHT11 antes y después de la sesión.
 - **Cómo entra el clima:** la red procesa el audio igual (8 000 → 32); la temperatura y la humedad,
-  estandarizadas, se suman a esas 32 neuronas justo antes de la capa de salida.
+  estandarizadas, se concatenan a las 32 salidas de la capa oculta y entran directo a la capa de
+  salida (33 o 34 entradas, en lugar de 32).
 - **Datos:** solo desde el viernes 20 de noviembre a las 15:00, con los nodos en su lugar final.
   14 327 segundos de 3 583 sesiones.
 - **Separación por tiempo:** entrenamiento hasta el domingo 22, validación el lunes 23 de 00:00 a

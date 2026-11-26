@@ -1,35 +1,23 @@
-# Servidor MQTT: suscriptor y base de datos local
+# Servidor MQTT: suscriptor, clasificador y base de datos local
 
-Corre en la laptop servidor de CICESE (`158.97.122.248`), junto a Mosquitto y
-PostgreSQL.
+Corre en la laptop servidor de CICESE, junto a Mosquitto y PostgreSQL.
 
 ```
-Nodo ESP32 ──MQTT QoS 1──▶ Mosquitto ──▶ subscriber.py ──▶ PostgreSQL
-                                              │
-                                              └──▶ AUDIO_DIR/<nodo>/<sesión>/clip_NNNN.u16 y .wav
+Nodo ESP32 ──MQTT QoS 1──▶ Mosquitto ──▶ subscriber.py ──▶ PostgreSQL + ESTACION_DIR/<nodo>/<sesión>/
+                                                                  │
+                                              classifier.py ◀─────┘  ──▶ tabla predictions
 ```
 
 | Archivo | Qué hace |
 |---|---|
-| `schema.sql` | Tablas `sessions`, `clips`, `climate`, `clip_features`, `labels` y dos vistas. Se puede correr las veces que sea. |
-| `protocol.py` | Valida tópicos y mensajes contra `contracts/mqtt.md`, decodifica el clip binario y guarda los archivos de audio. |
+| `schema.sql` | Tablas `sessions`, `clips`, `climate`, `clip_features`, `labels`, `predictions` y sus vistas. Se puede correr las veces que sea. |
+| `subscriber.py` | Escucha `estacion/#` y pasa cada mensaje a `estacion.py`. |
+| `estacion.py` | Guarda cada sesión como archivos y la mete a PostgreSQL. Calcula los rasgos MFCC de cada bloque con `analysis/features/mfcc.py`. |
 | `store.py` | Escribe en PostgreSQL; los duplicados de QoS 1 se ignoran por llave. |
-| `subscriber.py` | Escucha `noise/+/+/#` y conecta todo lo anterior. Calcula los 30 rasgos de cada clip con `analysis/features/mfcc.py`. |
-| `estacion.py` | Recibe los tópicos `estacion/#` del firmware de Arduino de Jesús: guarda cada sesión como archivos, igual que su receptor TCP, y la mete a las mismas tablas. |
-| `classifier.py` | Clasifica cada segundo de audio que llega (regla RMS y, si hay modelo, la red de Miguel) y lo guarda en `predictions`. |
-| `.env.example` | Plantilla de la configuración (broker, base de datos, carpetas de audio). |
+| `classifier.py` | Clasifica cada segundo de audio que llega (regla RMS y, si hay modelo, la red neuronal) y lo guarda en `predictions`. |
+| `.env.example` | Plantilla de la configuración (broker, base de datos, carpetas, clasificador). |
 
-## Qué se guarda de cada clip
-
-- `clip_NNNN.u16`: valores crudos del ADC, sin tocar. Es la fuente de verdad.
-- `clip_NNNN.wav`: solo para escuchar. Es `(crudo − promedio del clip) × 16` en
-  PCM de 16 bits; el promedio que se quitó queda en `clips.adc_mean`.
-- En `clips`: frecuencia real medida, muestras tarde, promedio, mínimo y máximo
-  del ADC y cuántas muestras saturaron (0 o 4095).
-- En `clip_features`: RMS medio y máximo, pico, cruces por cero y media y
-  desviación de 13 MFCC (`feature_version = mfcc13-v1`).
-
-## Sesiones de `estacion/` (firmware de Arduino de Jesús)
+## Sesiones de `estacion/`
 
 El firmware de Arduino (`firmware/ESP32/`) publica en su propio formato
 (`estacion/<dispositivo>/...`). El suscriptor se adapta a él: guarda cada sesión en
@@ -68,7 +56,7 @@ mismo dispositivo o tras 15 minutos sin mensajes.
 Corre aparte del suscriptor. Cada 15 s revisa las sesiones de `ESTACION_DIR` que recibieron
 bloques en las últimas 24 h y, por cada fragmento de 1 s nuevo (bloques 2k y 2k+1):
 
-1. Revisa su calidad con las reglas de Miguel (`analysis/labeling/clips.py`).
+1. Revisa su calidad (`analysis/labeling/clips.py`).
 2. Calcula `rms_dbfs` y la etiqueta de la regla con `NOISE_THRESHOLD_DBFS`.
 3. Si `MODEL_RUN_DIR` apunta a una carpeta de `analysis/pytorch_audio/train.py`, corre la red
    y guarda su probabilidad y su etiqueta. Si está vacío, `model_version = rule-only`.
@@ -107,8 +95,8 @@ Requiere `torch` solo si hay modelo. Cómo se etiqueta y se entrena: `analysis/l
    ```
 
 4. **Configuración**: copia `server/mqtt/.env.example` a `server/mqtt/.env` y pon
-   la contraseña de `noise_app`. Crea la carpeta de `AUDIO_DIR` (por ejemplo
-   `C:\noise-data\audio`). El `.env` no se sube al repo.
+   la contraseña de `noise_app`. Crea la carpeta de `ESTACION_DIR` (por ejemplo
+   `C:\noise-data\estacion`). El `.env` no se sube al repo.
 
 5. **Mosquitto con persistencia**: en `C:\Program Files\mosquitto\mosquitto.conf`
    deben estar `persistence true` y `persistence_location`. Así, si el suscriptor
@@ -125,12 +113,12 @@ python server/mqtt/subscriber.py
 Cada mensaje deja una línea en la consola (y en `LOG_FILE` si lo configuraste):
 
 ```
-INFO session/start esp32-01 20261112T180000Z
-INFO clip esp32-01 20261112T180000Z #0 late=0 clipped=0
-INFO climate esp32-01 20261112T180000Z
+INFO estacion esp32-01 20261124T180000Z inicio
+INFO estacion esp32-01 20261124T180000Z audio #0 rellenos=0
+INFO estacion esp32-01 20261124T180000Z dht antes T=24.1 H=58.0
 ```
 
-Un mensaje que no cumple el contrato aparece como `WARNING rejected ...` con la
+Un mensaje que no se puede procesar aparece como `WARNING estacion rejected ...` con la
 razón, y el suscriptor sigue.
 
 ### Que arranque solo con la laptop
@@ -160,7 +148,7 @@ from clips_timed order by captured_at desc limit 20;
 
 ## Pruebas
 
-En la PC, sin broker ni base de datos (requieren `numpy` y `jsonschema`):
+En la PC, sin broker ni base de datos (requieren `numpy`; las de la red, también `torch`):
 
 ```
 python -m unittest discover -s server/mqtt/tests

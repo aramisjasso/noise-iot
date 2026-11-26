@@ -106,7 +106,7 @@ def main() -> None:
     metadata_path = data_dir / "metadata.csv"
     labels_path = (args.labels or data_dir / "labels.csv").resolve()
     if not dataset_path.is_file() or not metadata_path.is_file():
-        raise SystemExit(f"No encuentro {dataset_path}. Ejecuta primero src/pytorch_audio/preprocess.py")
+        raise SystemExit(f"No encuentro {dataset_path}. Ejecuta primero analysis/labeling/label_rms.py --threshold ...")
 
     random.seed(args.seed)
     np.random.seed(args.seed)

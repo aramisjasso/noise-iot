@@ -7,9 +7,10 @@ and the same label (RMS >= threshold) as the live classifier. The climate of tha
 second is interpolated between the DHT11 reading before the session and the one
 after it (temp_hum.csv).
 
-Model: Miguel's AudioMLP (8000 -> 32 -> 2). The climate variants add the
-standardized temperature and/or humidity to the 32 hidden values, just before the
-output layer, so with sound only it is exactly his network.
+Model: the AudioMLP of analysis/pytorch_audio (8000 -> 32 -> 2). The climate variants
+concatenate the standardized temperature and/or humidity to the 32 outputs of the
+hidden layer, just before the output layer, so with sound only it is exactly the
+same network.
 
 Split by time (local time of Tepic): train before --val-from, validation from
 --val-from to --test-from (early stopping), test from --test-from on. Every
@@ -131,7 +132,7 @@ def build_model(n_extra):
     from torch import nn
 
     class AudioClimateMLP(nn.Module):
-        """Miguel's AudioMLP; the climate joins the 32 hidden values."""
+        """The AudioMLP; the climate is concatenated to the 32 hidden values."""
 
         def __init__(self):
             super().__init__()

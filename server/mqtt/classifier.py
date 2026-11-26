@@ -4,10 +4,10 @@ Runs next to subscriber.py. Every CLASSIFIER_POLL_S seconds it looks at the
 sessions in ESTACION_DIR touched in the last CLASSIFIER_LOOKBACK_H hours and, for
 every one-second clip (blocks 2k and 2k+1) not stored yet:
 
-1. Checks its quality (analysis/labeling/clips.py, Miguel's rules).
+1. Checks its quality (analysis/labeling/clips.py).
 2. Computes the RMS in dBFS and the rule label with NOISE_THRESHOLD_DBFS.
 3. If MODEL_RUN_DIR points to a run of analysis/pytorch_audio/train.py, runs the
-   network (Miguel's AudioMLP) and stores its probability and label.
+   network (AudioMLP) and stores its probability and label.
 
 Results go to the predictions table (schema.sql); Node-RED reads it or the
 predictions_timed and node_status views. A clip with a block that has not
@@ -54,7 +54,7 @@ def load_env(path=os.path.join(HERE, ".env")):
 
 
 class Network:
-    """Miguel's AudioMLP loaded from a train.py run folder (model.pt)."""
+    """The AudioMLP loaded from a train.py run folder (model.pt)."""
 
     def __init__(self, run_dir):
         sys.path.insert(0, os.path.join(REPO_DIR, "analysis", "pytorch_audio"))
